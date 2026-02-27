@@ -14,17 +14,15 @@ PDFs are everywhere -- academic papers, government forms, reports. But most PDFs
 pip install accesspdf
 ```
 
-This gives you the CLI tool and everything needed for structural fixes and manual alt text. For optional features:
+This gives you the CLI tool and everything needed for structural fixes, manual alt text, and **AI-powered alt text via Google Gemini** (free, no extra install). For optional features:
 
 ```bash
 # Browser-based UI for reviewing images and writing alt text
 pip install accesspdf[web]
 
-# AI-powered alt text drafts (pick your provider)
+# Additional AI providers (Gemini works out of the box -- these are optional)
 pip install accesspdf[anthropic]   # Claude
 pip install accesspdf[openai]      # GPT-4
-pip install accesspdf[gemini]      # Gemini
-pip install accesspdf[all-providers]  # all of the above
 ```
 
 ## How to use it
@@ -101,26 +99,27 @@ accesspdf serve
 
 This opens a browser window at `http://localhost:8080`. Upload your fixed PDF, see all the images laid out, and type descriptions right in the browser. When you're done, download the final PDF.
 
-The web UI also has an "AI generate" button -- for that to work, you need Ollama installed (see Option C below) or a cloud API key pasted into the settings panel.
+The web UI also has an "AI generate" button -- set your Gemini API key in the settings panel (or use Ollama if you have it installed).
 
 **Option C: AI-assisted (fastest)**
 
-Have AI draft descriptions, then you review and approve them. This uses **Ollama** by default -- a free, local AI runner. You need to install it first:
+Have AI draft descriptions, then you review and approve them. The easiest setup is **Google Gemini** -- it's free and works out of the box with just an API key:
 
-1. Download and install from [ollama.com](https://ollama.com)
-2. Pull the vision model: `ollama pull llava`
+1. Go to [ai.google.dev](https://ai.google.dev) and sign in with your Google account
+2. Click "Get API key" and create one
+3. Set it as an environment variable: `export GOOGLE_API_KEY=AIza...`
 
 Then generate drafts:
 
 ```bash
-# Generate drafts (uses Ollama locally -- free, no API key)
-accesspdf generate-alt-text my-document_accessible.pdf
+# Generate drafts with Gemini (free, nothing to install)
+accesspdf generate-alt-text my-document_accessible.pdf --provider gemini
 
 # Then review and approve/edit the drafts
 accesspdf review my-document_accessible.pdf
 ```
 
-If you'd rather use a cloud provider (Claude, GPT-4, Gemini) instead, see [AI providers](#ai-providers-for-alt-text) below.
+**Prefer to run AI locally?** You can use Ollama instead -- see [AI providers](#ai-providers-for-alt-text) below.
 
 AI drafts are **never** injected automatically. They show up as suggestions that you approve, edit, or reject.
 
@@ -160,31 +159,36 @@ accesspdf batch ./papers/ -o ./papers/accessible/ --alt-text-dir ./papers/
 
 AccessPDF can use AI vision models to draft image descriptions. You still review everything before it gets injected.
 
-| Provider | Runs locally? | API key needed? |
-|----------|--------------|-----------------|
-| **Ollama** (default) | Yes | No |
-| Anthropic (Claude) | No | `ANTHROPIC_API_KEY` |
-| OpenAI (GPT-4) | No | `OPENAI_API_KEY` |
-| Gemini | No | `GOOGLE_API_KEY` |
+| Provider | Extra install? | API key needed? | Cost |
+|----------|---------------|-----------------|------|
+| **Gemini** (recommended) | No | `GOOGLE_API_KEY` | Free tier |
+| Ollama | Yes (local app) | No | Free (runs on your machine) |
+| Anthropic (Claude) | `pip install accesspdf[anthropic]` | `ANTHROPIC_API_KEY` | Paid |
+| OpenAI (GPT-4) | `pip install accesspdf[openai]` | `OPENAI_API_KEY` | Paid |
 
-**Ollama** is the default because it's free and runs on your machine. Install it from [ollama.com](https://ollama.com), then pull a vision model:
+**Gemini is the easiest to get started with** -- it's free, works out of the box, and only needs an API key from [ai.google.dev](https://ai.google.dev).
 
-```bash
-ollama pull llava:13b
-```
-
-For cloud providers, set your API key as an environment variable or pass it directly:
+**Ollama** is for people who want everything running locally with no cloud calls. Install it from [ollama.com](https://ollama.com), then pull a vision model:
 
 ```bash
-# Via environment variable
-export ANTHROPIC_API_KEY=sk-ant-...
-accesspdf generate-alt-text my-document_accessible.pdf --provider anthropic
-
-# Or pass it directly
-accesspdf generate-alt-text my-document_accessible.pdf --provider openai --api-key sk-...
+ollama pull llava
 ```
 
-In the web UI, you can paste your API key right in the browser -- it's sent per-request and never saved to disk.
+For any provider, set your API key as an environment variable or pass it directly:
+
+```bash
+# Gemini (free)
+export GOOGLE_API_KEY=AIza...
+accesspdf generate-alt-text my-document_accessible.pdf --provider gemini
+
+# Or pass the key directly
+accesspdf generate-alt-text my-document_accessible.pdf --provider gemini --api-key AIza...
+
+# Cloud providers work the same way
+accesspdf generate-alt-text my-document_accessible.pdf --provider anthropic --api-key sk-ant-...
+```
+
+In the web UI, you can paste your API key right in the settings panel -- it's sent per-request and never saved to disk.
 
 Check which providers are available on your system:
 

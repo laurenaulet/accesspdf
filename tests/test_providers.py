@@ -79,7 +79,7 @@ class TestOllamaProvider:
 
     def test_default_model(self) -> None:
         provider = OllamaProvider()
-        assert provider._model == "llava:13b"
+        assert provider._model == "llava"
 
     def test_custom_model(self) -> None:
         provider = OllamaProvider(model="llava:7b")

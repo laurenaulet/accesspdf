@@ -25,7 +25,7 @@ class OllamaProvider:
     def __init__(
         self,
         *,
-        model: str = "llava:13b",
+        model: str = "llava",
         base_url: str = "http://localhost:11434",
         max_tokens: int = 300,
         **_kwargs: object,
