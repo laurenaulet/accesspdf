@@ -49,11 +49,48 @@
   .summary-bar {
     display: flex; gap: 1rem; flex-wrap: wrap; align-items: center;
     background: var(--card); border-radius: var(--radius); padding: 1rem;
-    box-shadow: var(--shadow); margin-bottom: 1.5rem;
+    box-shadow: var(--shadow); margin-bottom: 1rem;
   }
   .summary-bar .filename { font-weight: 600; flex: 1; }
   .summary-bar .stat { font-size: .875rem; color: var(--muted); }
   .summary-bar .stat b { color: var(--fg); }
+
+  /* AI settings panel */
+  .ai-panel {
+    background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow);
+    padding: 1rem 1.25rem; margin-bottom: 1rem;
+  }
+  .ai-panel-header {
+    display: flex; align-items: center; gap: .75rem; margin-bottom: .5rem;
+  }
+  .ai-panel-header h3 { font-size: .95rem; font-weight: 600; flex: 1; }
+  .toggle-switch { position: relative; width: 44px; height: 24px; flex-shrink: 0; }
+  .toggle-switch input { opacity: 0; width: 0; height: 0; }
+  .toggle-slider {
+    position: absolute; inset: 0; background: var(--border); border-radius: 24px;
+    cursor: pointer; transition: background .2s;
+  }
+  .toggle-slider::before {
+    content: ""; position: absolute; width: 18px; height: 18px; left: 3px; top: 3px;
+    background: #fff; border-radius: 50%; transition: transform .2s;
+  }
+  .toggle-switch input:checked + .toggle-slider { background: var(--accent); }
+  .toggle-switch input:checked + .toggle-slider::before { transform: translateX(20px); }
+
+  .ai-controls { display: none; gap: .75rem; flex-wrap: wrap; align-items: end; margin-top: .75rem; }
+  .ai-controls.visible { display: flex; }
+
+  .ai-controls .field { display: flex; flex-direction: column; gap: .25rem; }
+  .ai-controls .field label { font-size: .8rem; color: var(--muted); font-weight: 500; }
+  .ai-controls select, .ai-controls input[type="text"], .ai-controls input[type="password"] {
+    padding: .4rem .6rem; border: 1px solid var(--border); border-radius: 4px;
+    font-size: .875rem; font-family: inherit;
+  }
+  .ai-controls select:focus, .ai-controls input:focus {
+    outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px rgba(13,110,253,.25);
+  }
+  #api-key-field { display: none; }
+  #api-key-field.visible { display: flex; }
 
   .actions-bar { display: flex; gap: .75rem; margin-bottom: 1.5rem; flex-wrap: wrap; }
 
@@ -79,6 +116,21 @@
     max-width: 100%; max-height: 300px; border-radius: 4px;
     background: #eee; display: block; margin-bottom: .75rem;
   }
+
+  /* AI draft suggestion */
+  .ai-draft-box {
+    display: none; background: #e8f4f8; border-left: 3px solid var(--accent);
+    padding: .6rem .75rem; border-radius: 0 4px 4px 0; margin-bottom: .5rem;
+    font-size: .875rem;
+  }
+  .ai-draft-box.visible { display: block; }
+  .ai-draft-box .draft-label { font-size: .75rem; color: var(--accent); font-weight: 600;
+    margin-bottom: .25rem; }
+  .ai-draft-box .draft-text { color: var(--fg); }
+  .ai-draft-box .btn-use-draft {
+    margin-top: .4rem; font-size: .8rem; padding: .25rem .6rem;
+  }
+
   .image-card textarea {
     width: 100%; min-height: 80px; padding: .5rem; border: 1px solid var(--border);
     border-radius: 4px; font-family: inherit; font-size: .9rem; resize: vertical;
@@ -127,7 +179,7 @@
   <!-- Processing -->
   <div id="progress">
     <div class="spinner" aria-label="Processing"></div>
-    <p style="margin-top:.75rem">Processing your PDF&hellip;</p>
+    <p id="progress-text" style="margin-top:.75rem">Processing your PDF&hellip;</p>
   </div>
 
   <!-- Results -->
@@ -137,6 +189,35 @@
       <span class="stat">Images: <b id="stat-total">0</b></span>
       <span class="stat">Approved: <b id="stat-approved">0</b></span>
       <span class="stat">Needs review: <b id="stat-needs">0</b></span>
+    </div>
+
+    <!-- AI settings panel -->
+    <div class="ai-panel" id="ai-panel">
+      <div class="ai-panel-header">
+        <h3>Alt text mode</h3>
+        <span style="font-size:.85rem;color:var(--muted)" id="mode-label">Manual</span>
+        <label class="toggle-switch">
+          <input type="checkbox" id="ai-toggle">
+          <span class="toggle-slider"></span>
+        </label>
+        <span style="font-size:.85rem;color:var(--accent);font-weight:500">AI</span>
+      </div>
+      <div class="ai-controls" id="ai-controls">
+        <div class="field">
+          <label for="provider-select">Provider</label>
+          <select id="provider-select">
+            <option value="ollama" selected>Ollama (local, free)</option>
+            <option value="anthropic">Anthropic (Claude)</option>
+            <option value="openai">OpenAI (GPT-4)</option>
+            <option value="gemini">Google (Gemini)</option>
+          </select>
+        </div>
+        <div class="field" id="api-key-field">
+          <label for="api-key-input">API key</label>
+          <input type="password" id="api-key-input" placeholder="Paste your API key here" style="width:260px">
+        </div>
+        <button class="btn btn-primary" id="btn-generate">Generate all</button>
+      </div>
     </div>
 
     <div class="actions-bar">
@@ -157,14 +238,35 @@
   const fileInput = document.getElementById("file-input");
   const uploadSection = document.getElementById("upload-section");
   const progressDiv = document.getElementById("progress");
+  const progressText = document.getElementById("progress-text");
   const resultsDiv = document.getElementById("results");
   const imageList = document.getElementById("image-list");
   const btnSave = document.getElementById("btn-save");
   const btnDownload = document.getElementById("btn-download");
   const btnNew = document.getElementById("btn-new");
+  const aiToggle = document.getElementById("ai-toggle");
+  const aiControls = document.getElementById("ai-controls");
+  const modeLabel = document.getElementById("mode-label");
+  const providerSelect = document.getElementById("provider-select");
+  const apiKeyField = document.getElementById("api-key-field");
+  const apiKeyInput = document.getElementById("api-key-input");
+  const btnGenerate = document.getElementById("btn-generate");
+  const aiPanel = document.getElementById("ai-panel");
 
   let currentJobId = null;
-  let imageData = [];  // mirrors server state
+  let imageData = [];
+
+  // --- AI toggle ---
+  aiToggle.addEventListener("change", () => {
+    const on = aiToggle.checked;
+    aiControls.classList.toggle("visible", on);
+    modeLabel.textContent = on ? "AI" : "Manual";
+  });
+
+  providerSelect.addEventListener("change", () => {
+    const needsKey = providerSelect.value !== "ollama";
+    apiKeyField.classList.toggle("visible", needsKey);
+  });
 
   // --- Upload handling ---
   dropZone.addEventListener("click", () => fileInput.click());
@@ -187,6 +289,7 @@
 
     uploadSection.style.display = "none";
     progressDiv.style.display = "block";
+    progressText.textContent = "Processing your PDF\u2026";
     resultsDiv.style.display = "none";
 
     const form = new FormData();
@@ -231,19 +334,24 @@
     document.getElementById("result-filename").textContent = data.filename || "PDF";
     updateStats(data.stats);
 
+    // Show/hide AI panel based on whether there are images
+    aiPanel.style.display = imageData.length > 0 ? "block" : "none";
+
+    renderImageCards();
+
+    btnSave.disabled = imageData.length === 0;
+    btnDownload.disabled = false;
+  }
+
+  function renderImageCards() {
     imageList.innerHTML = "";
     if (imageData.length === 0) {
       imageList.innerHTML = '<div class="no-images">No images found in this PDF. Structural fixes have been applied.</div>';
-      btnDownload.disabled = false;
       return;
     }
-
     imageData.forEach((img, idx) => {
       imageList.appendChild(createImageCard(img, idx));
     });
-
-    btnSave.disabled = false;
-    btnDownload.disabled = false;
   }
 
   function updateStats(stats) {
@@ -258,6 +366,9 @@
     card.className = "image-card";
     card.dataset.hash = img.image_hash;
 
+    const draftVisible = img.ai_draft ? "visible" : "";
+    const textValue = img.alt_text || img.ai_draft || "";
+
     card.innerHTML = `
       <div class="card-header">
         <h3>${img.id} (page ${img.page})</h3>
@@ -265,9 +376,14 @@
       </div>
       <img class="image-preview" src="/api/job/${currentJobId}/image/${img.image_hash}"
            alt="Image from page ${img.page}" loading="lazy">
+      <div class="ai-draft-box ${draftVisible}" data-idx="${idx}">
+        <div class="draft-label">AI suggestion</div>
+        <div class="draft-text">${escapeHtml(img.ai_draft || "")}</div>
+        <button class="btn btn-outline btn-use-draft" data-idx="${idx}">Use this</button>
+      </div>
       <label for="alt-${idx}">Alt text:</label>
       <textarea id="alt-${idx}" placeholder="Describe this image for screen readers&hellip;"
-        >${img.alt_text || img.ai_draft || ""}</textarea>
+        >${escapeHtml(textValue)}</textarea>
       <div class="card-actions">
         <button class="btn btn-success btn-approve" data-idx="${idx}">Approve</button>
         <button class="btn btn-secondary btn-decorative" data-idx="${idx}">Mark decorative</button>
@@ -276,12 +392,80 @@
     return card;
   }
 
-  // --- Actions ---
+  function escapeHtml(str) {
+    const div = document.createElement("div");
+    div.textContent = str;
+    return div.innerHTML;
+  }
+
+  // --- AI Generate ---
+  btnGenerate.addEventListener("click", async () => {
+    if (!currentJobId || imageData.length === 0) return;
+
+    btnGenerate.disabled = true;
+    btnGenerate.textContent = "Generating\u2026";
+
+    const payload = { provider: providerSelect.value };
+    const key = apiKeyInput.value.trim();
+    if (key) payload.api_key = key;
+
+    try {
+      const resp = await fetch(`/api/job/${currentJobId}/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await resp.json();
+
+      if (!resp.ok) {
+        alert(data.detail || "Generation failed.");
+        btnGenerate.textContent = "Generate all";
+        btnGenerate.disabled = false;
+        return;
+      }
+
+      // Update image data with new drafts
+      if (data.images) {
+        imageData = data.images;
+        renderImageCards();
+      }
+
+      // Refresh stats
+      const statusResp = await fetch(`/api/job/${currentJobId}`);
+      const statusData = await statusResp.json();
+      updateStats(statusData.stats);
+
+      if (data.errors && data.errors.length > 0) {
+        alert(`Generated ${data.generated} draft(s), but ${data.errors.length} failed. Check provider settings.`);
+      }
+
+      btnGenerate.textContent = `Generated ${data.generated}!`;
+      setTimeout(() => { btnGenerate.textContent = "Generate all"; btnGenerate.disabled = false; }, 2000);
+    } catch (err) {
+      alert("Generation error: " + err.message);
+      btnGenerate.textContent = "Generate all";
+      btnGenerate.disabled = false;
+    }
+  });
+
+  // --- Card actions ---
   imageList.addEventListener("click", (e) => {
     const btn = e.target.closest("button");
     if (!btn) return;
     const idx = parseInt(btn.dataset.idx);
     const card = btn.closest(".image-card");
+
+    // "Use this" button copies AI draft to textarea
+    if (btn.classList.contains("btn-use-draft")) {
+      const textarea = card.querySelector("textarea");
+      const draftText = card.querySelector(".draft-text");
+      if (textarea && draftText) {
+        textarea.value = draftText.textContent;
+        imageData[idx].alt_text = draftText.textContent;
+      }
+      return;
+    }
+
     const badge = card.querySelector(".badge");
     const textarea = card.querySelector("textarea");
 
@@ -322,7 +506,6 @@
         body: JSON.stringify(updates),
       });
 
-      // Refresh stats
       const resp = await fetch(`/api/job/${currentJobId}`);
       const data = await resp.json();
       updateStats(data.stats);
@@ -341,10 +524,8 @@
     btnDownload.textContent = "Preparing\u2026";
 
     try {
-      // Inject alt text first
       await fetch(`/api/job/${currentJobId}/inject`, { method: "POST" });
 
-      // Trigger download
       const a = document.createElement("a");
       a.href = `/api/job/${currentJobId}/download`;
       a.download = "";
@@ -367,6 +548,9 @@
     resultsDiv.style.display = "none";
     uploadSection.style.display = "block";
     fileInput.value = "";
+    aiToggle.checked = false;
+    aiControls.classList.remove("visible");
+    modeLabel.textContent = "Manual";
   });
 })();
 </script>

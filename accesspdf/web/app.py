@@ -184,6 +184,94 @@ def create_app() -> FastAPI:
             media_type="application/pdf",
         )
 
+    @app.get("/api/providers")
+    async def get_providers() -> dict:
+        """Return available AI providers."""
+        from accesspdf.providers import list_available
+
+        providers = []
+        for name, available in list_available():
+            providers.append({
+                "name": name,
+                "available": available,
+                "needs_api_key": name not in ("ollama", "noop"),
+            })
+        return {"providers": providers}
+
+    @app.post("/api/job/{job_id}/generate")
+    async def generate(job_id: str, request: dict) -> dict:
+        """Generate AI alt text drafts for images in a job.
+
+        Expects JSON: {provider, api_key?, model?}
+        """
+        job = _get_job(job_id)
+        if job.output_path is None or job.sidecar is None:
+            raise HTTPException(status_code=400, detail="Job not ready.")
+
+        provider_name = request.get("provider", "ollama")
+        api_key = request.get("api_key")
+        model = request.get("model")
+
+        from accesspdf.providers import get_provider
+
+        kwargs: dict = {}
+        if model:
+            kwargs["model"] = model
+        try:
+            provider = get_provider(provider_name, api_key=api_key, **kwargs)
+        except (ValueError, ImportError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+        # Generate for images that need drafts
+        from accesspdf.alttext.extract import extract_image
+        from accesspdf.providers.base import ImageContext
+
+        pending = [e for e in job.sidecar.images
+                   if not e.ai_draft and e.status == AltTextStatus.NEEDS_REVIEW]
+
+        generated = 0
+        errors = []
+        for entry in pending:
+            img = extract_image(job.output_path, entry.hash)
+            if img is None:
+                continue
+
+            buf = io.BytesIO()
+            img.save(buf, format="PNG")
+            context = ImageContext(
+                image_bytes=buf.getvalue(),
+                page=entry.page,
+                caption=entry.caption,
+                document_title=job.sidecar.document,
+            )
+
+            result = await provider.generate(context)
+            if result.alt_text:
+                entry.ai_draft = result.alt_text
+                generated += 1
+            elif result.error:
+                errors.append({"image_id": entry.id, "error": result.error})
+
+        # Save sidecar
+        if job.sidecar_path:
+            SidecarManager.save(job.sidecar, job.sidecar_path)
+
+        return {
+            "generated": generated,
+            "errors": errors,
+            "images": [
+                {
+                    "id": e.id,
+                    "image_hash": e.hash,
+                    "page": e.page,
+                    "alt_text": e.alt_text,
+                    "ai_draft": e.ai_draft,
+                    "status": e.status.value,
+                }
+                for e in job.sidecar.images
+            ],
+        }
+
     return app
 
 
