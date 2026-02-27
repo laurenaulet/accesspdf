@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 import logging
 import os
 
@@ -83,11 +84,15 @@ class GeminiProvider:
 
         url = f"{_API_BASE}/{self._model}:generateContent?key={self._api_key}"
 
+        # Serialize to bytes so httpx sends Content-Length (Google rejects chunked)
+        body = json.dumps(payload).encode("utf-8")
+        headers = {"Content-Type": "application/json", "Content-Length": str(len(body))}
+
         # Retry loop for rate limiting
         for attempt in range(_MAX_RETRIES + 1):
             try:
                 async with httpx.AsyncClient(timeout=60.0) as client:
-                    resp = await client.post(url, json=payload)
+                    resp = await client.post(url, content=body, headers=headers)
 
                     # Retry on rate limit
                     if resp.status_code == 429 and attempt < _MAX_RETRIES:
