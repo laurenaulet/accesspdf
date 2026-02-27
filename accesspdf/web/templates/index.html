@@ -184,6 +184,17 @@
     background: #d1e7dd; color: #0f5132; padding: .6rem .75rem; border-radius: 4px;
     font-weight: 500; text-align: center;
   }
+  .report-fixed {
+    margin-top: .75rem; padding: .75rem; background: #d1e7dd; border-radius: 4px;
+    font-size: .85rem; color: #0f5132;
+  }
+  .report-fixed h4 { font-size: .85rem; font-weight: 600; margin-bottom: .4rem; }
+  .report-fixed ul { margin: 0; padding-left: 1.25rem; }
+  .report-fixed li { margin-bottom: .2rem; }
+  .report-remaining {
+    margin-top: .5rem; padding: .6rem .75rem; background: #fff3cd; border-radius: 4px;
+    font-size: .85rem; color: #664d03;
+  }
 
   footer { text-align: center; color: var(--muted); font-size: .8rem; padding: 2rem 0 1rem; }
 </style>
@@ -221,9 +232,10 @@
 
     <!-- Accessibility report -->
     <div class="report-panel" id="report-panel" style="display:none">
-      <h3>Accessibility Report (original PDF)</h3>
+      <h3>Accessibility Report</h3>
       <div class="report-grid" id="report-grid"></div>
       <div class="report-issues" id="report-issues"></div>
+      <div id="report-fixed"></div>
     </div>
 
     <!-- AI settings panel -->
@@ -430,8 +442,42 @@
         </div>`;
       }).join("");
     } else {
-      issuesDiv.innerHTML = '<div class="report-pass-banner">No accessibility issues found. Structural fixes have been applied.</div>';
+      issuesDiv.innerHTML = '<div class="report-pass-banner">No accessibility issues found!</div>';
     }
+
+    // Show what was fixed and what still needs work
+    const fixedDiv = document.getElementById("report-fixed");
+    const autoFixed = [];
+    const needsHuman = [];
+
+    // Determine what the pipeline auto-fixes
+    if (!analysis.is_tagged) autoFixed.push("Added document structure tags");
+    if (!analysis.has_lang) autoFixed.push("Set document language");
+    if (!analysis.title) autoFixed.push("Set document title from content");
+    // These are always done by the pipeline
+    autoFixed.push("Reading order optimized");
+    autoFixed.push("Headings detected and tagged");
+    autoFixed.push("Bookmarks created from headings");
+
+    // Check for things that need human input
+    const hasAltTextIssue = analysis.issues && analysis.issues.some(i => i.rule === "image-alt-text");
+    if (hasAltTextIssue || analysis.images > 0) {
+      needsHuman.push("Image descriptions (alt text) -- review and approve below");
+    }
+
+    let fixedHtml = "";
+    if (autoFixed.length > 0) {
+      fixedHtml += `<div class="report-fixed">
+        <h4>Fixed automatically in the download:</h4>
+        <ul>${autoFixed.map(f => `<li>${f}</li>`).join("")}</ul>
+      </div>`;
+    }
+    if (needsHuman.length > 0) {
+      fixedHtml += `<div class="report-remaining">
+        Still needs your input: ${needsHuman.join("; ")}
+      </div>`;
+    }
+    fixedDiv.innerHTML = fixedHtml;
   }
 
   function renderImageCards() {
