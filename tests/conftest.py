@@ -53,6 +53,16 @@ def images_pdf(corpus_dir: Path) -> Path:
     return corpus_dir / "images.pdf"
 
 
+@pytest.fixture(scope="session")
+def low_contrast_pdf(corpus_dir: Path) -> Path:
+    return corpus_dir / "low_contrast.pdf"
+
+
+@pytest.fixture(scope="session")
+def ambiguous_links_pdf(corpus_dir: Path) -> Path:
+    return corpus_dir / "ambiguous_links.pdf"
+
+
 @pytest.fixture
 def output_pdf(tmp_path: Path) -> Path:
     """Temporary output path for remediated PDFs."""

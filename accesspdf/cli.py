@@ -49,6 +49,11 @@ def check(
     analyzer = PDFAnalyzer()
     result = analyzer.analyze(pdf)
 
+    # Count tags by type for summary
+    link_count = sum(1 for t in result.tags if t.tag_type == "Link")
+    table_count = sum(1 for t in result.tags if t.tag_type == "Table")
+    contrast_issues = [i for i in result.issues if i.rule.startswith("contrast-")]
+
     table = Table(title=f"Accessibility Report: {pdf.name}")
     table.add_column("Metric", style="bold")
     table.add_column("Value")
@@ -58,6 +63,12 @@ def check(
     table.add_row("Language set", "Yes" if result.has_lang else "[red]No[/red]")
     table.add_row("Title", result.title or "[red]Not set[/red]")
     table.add_row("Images found", str(len(result.images)))
+    table.add_row("Links found", str(link_count))
+    table.add_row("Tables found", str(table_count))
+    table.add_row(
+        "Contrast",
+        "[green]OK[/green]" if not contrast_issues else f"[yellow]{len(contrast_issues)} issue(s)[/yellow]",
+    )
     table.add_row("Errors", str(result.error_count))
     table.add_row("Warnings", str(result.warning_count))
 
@@ -65,8 +76,13 @@ def check(
 
     if result.issues:
         console.print()
+        severity_icon = {
+            "error": "[red]X[/red]",
+            "warning": "[yellow]![/yellow]",
+            "info": "[blue]i[/blue]",
+        }
         for issue in result.issues:
-            icon = "[red]X[/red]" if issue.severity.value == "error" else "[yellow]![/yellow]"
+            icon = severity_icon.get(issue.severity.value, " ")
             console.print(f"  {icon} [{issue.rule}] {issue.message}")
 
 

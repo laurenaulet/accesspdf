@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import re
 from pathlib import Path
 
 import pikepdf
@@ -19,8 +20,27 @@ from accesspdf.models import (
     Severity,
     TagInfo,
 )
+from accesspdf.utils.contrast import contrast_ratio, parse_pdf_color
 
 logger = logging.getLogger(__name__)
+
+WHITE = (255, 255, 255)
+
+_AMBIGUOUS_LINK_TEXTS = frozenset({
+    "click here",
+    "here",
+    "read more",
+    "learn more",
+    "link",
+    "more",
+    "more info",
+    "more information",
+    "details",
+    "go",
+    "see more",
+})
+
+_URL_PATTERN = re.compile(r"^https?://\S+$", re.IGNORECASE)
 
 
 class PDFAnalyzer:
@@ -41,6 +61,7 @@ class PDFAnalyzer:
             self._check_metadata(pdf, result)
             self._check_tags(pdf, result)
             self._extract_images_from_xobjects(pdf, result)
+            self._check_contrast(pdf, result)
 
         self._build_issues(result)
 
@@ -205,6 +226,114 @@ class PDFAnalyzer:
         except Exception:
             logger.debug("Could not scan form XObject on page %d", page_num, exc_info=True)
 
+    # ------------------------------------------------------------------
+    # Contrast checking (WCAG 1.4.3)
+    # ------------------------------------------------------------------
+
+    def _check_contrast(self, pdf: pikepdf.Pdf, result: AnalysisResult) -> None:
+        """Extract text colors from content streams and flag low contrast."""
+        low_contrast_pages: list[int] = []
+        very_low_contrast_pages: list[int] = []
+
+        for page_num, page in enumerate(pdf.pages, start=1):
+            try:
+                colors = self._extract_text_colors(page)
+                for color in colors:
+                    ratio = contrast_ratio(color, WHITE)
+                    if ratio < 3.0:
+                        very_low_contrast_pages.append(page_num)
+                        break
+                    elif ratio < 4.5:
+                        low_contrast_pages.append(page_num)
+                        break
+            except Exception:
+                logger.debug(
+                    "Could not check contrast on page %d", page_num, exc_info=True
+                )
+
+        if very_low_contrast_pages:
+            pages_str = ", ".join(str(p) for p in very_low_contrast_pages[:5])
+            suffix = (
+                f" and {len(very_low_contrast_pages) - 5} more"
+                if len(very_low_contrast_pages) > 5
+                else ""
+            )
+            result.issues.append(
+                AccessibilityIssue(
+                    rule="contrast-very-low",
+                    severity=Severity.ERROR,
+                    message=(
+                        f"Very low text contrast (ratio < 3:1) on page(s) "
+                        f"{pages_str}{suffix}."
+                    ),
+                )
+            )
+
+        if low_contrast_pages:
+            pages_str = ", ".join(str(p) for p in low_contrast_pages[:5])
+            suffix = (
+                f" and {len(low_contrast_pages) - 5} more"
+                if len(low_contrast_pages) > 5
+                else ""
+            )
+            result.issues.append(
+                AccessibilityIssue(
+                    rule="contrast-low",
+                    severity=Severity.WARNING,
+                    message=(
+                        f"Low text contrast (ratio < 4.5:1) on page(s) "
+                        f"{pages_str}{suffix}."
+                    ),
+                )
+            )
+
+    def _extract_text_colors(self, page: pikepdf.Page) -> list[tuple[int, int, int]]:
+        """Parse content stream operators to find text fill colors."""
+        try:
+            ops = pikepdf.parse_content_stream(page)
+        except Exception:
+            return []
+
+        colors: list[tuple[int, int, int]] = []
+        current_fill: tuple[int, int, int] = (0, 0, 0)  # default: black
+        seen: set[tuple[int, int, int]] = set()
+        in_text = False
+
+        for operands, operator in ops:
+            op = str(operator)
+
+            # Track text blocks
+            if op == "BT":
+                in_text = True
+            elif op == "ET":
+                in_text = False
+
+            # Non-stroking (fill) color operators
+            elif op == "rg" and len(operands) >= 3:
+                current_fill = parse_pdf_color(
+                    [float(o) for o in operands[:3]], "rgb"
+                )
+            elif op == "g" and len(operands) >= 1:
+                current_fill = parse_pdf_color(
+                    [float(operands[0])], "gray"
+                )
+            elif op == "k" and len(operands) >= 4:
+                current_fill = parse_pdf_color(
+                    [float(o) for o in operands[:4]], "cmyk"
+                )
+
+            # Text-showing operators: Tj, TJ, ', "
+            elif op in ("Tj", "TJ", "'", '"') and in_text:
+                if current_fill not in seen:
+                    seen.add(current_fill)
+                    colors.append(current_fill)
+
+        return colors
+
+    # ------------------------------------------------------------------
+    # Issue building
+    # ------------------------------------------------------------------
+
     def _build_issues(self, result: AnalysisResult) -> None:
         """Generate accessibility issues from the analysis result."""
         if not result.is_tagged:
@@ -243,5 +372,79 @@ class PDFAnalyzer:
                     rule="image-alt-text",
                     severity=Severity.ERROR,
                     message=f"{len(images_without_alt)} image(s) missing alt text.",
+                )
+            )
+
+        self._check_links(result)
+        self._check_tables(result)
+
+    # ------------------------------------------------------------------
+    # Link validation (WCAG 2.4.4)
+    # ------------------------------------------------------------------
+
+    def _check_links(self, result: AnalysisResult) -> None:
+        """Check link tags for ambiguous, bare-URL, or empty link text."""
+        link_tags = [t for t in result.tags if t.tag_type == "Link"]
+        if not link_tags:
+            return
+
+        ambiguous_count = 0
+        bare_url_count = 0
+        empty_count = 0
+
+        for tag in link_tags:
+            text = tag.alt_text.strip()
+            if not text or text == "Link":
+                empty_count += 1
+            elif text.lower() in _AMBIGUOUS_LINK_TEXTS:
+                ambiguous_count += 1
+            elif _URL_PATTERN.match(text):
+                bare_url_count += 1
+
+        if empty_count:
+            result.issues.append(
+                AccessibilityIssue(
+                    rule="link-empty-text",
+                    severity=Severity.ERROR,
+                    message=f"{empty_count} link(s) have no descriptive text.",
+                )
+            )
+
+        if ambiguous_count:
+            result.issues.append(
+                AccessibilityIssue(
+                    rule="link-ambiguous-text",
+                    severity=Severity.WARNING,
+                    message=(
+                        f"{ambiguous_count} link(s) use ambiguous text "
+                        f'(e.g. "click here", "read more").'
+                    ),
+                )
+            )
+
+        if bare_url_count:
+            result.issues.append(
+                AccessibilityIssue(
+                    rule="link-bare-url",
+                    severity=Severity.INFO,
+                    message=f"{bare_url_count} link(s) use a bare URL as link text.",
+                )
+            )
+
+    # ------------------------------------------------------------------
+    # Table validation
+    # ------------------------------------------------------------------
+
+    def _check_tables(self, result: AnalysisResult) -> None:
+        """Check table structure for headers and scope attributes."""
+        table_tags = [t for t in result.tags if t.tag_type == "Table"]
+        th_tags = [t for t in result.tags if t.tag_type == "TH"]
+
+        if table_tags and not th_tags:
+            result.issues.append(
+                AccessibilityIssue(
+                    rule="table-no-headers",
+                    severity=Severity.WARNING,
+                    message=f"{len(table_tags)} table(s) have no header cells (TH).",
                 )
             )

@@ -41,6 +41,36 @@ class TestTablesProcessor:
         self._run(simple_pdf, output_pdf)
         assert self.result.changes_made == 0
 
+    def test_th_has_id(self, tables_pdf: Path, output_pdf: Path) -> None:
+        self._run(tables_pdf, output_pdf)
+        with pikepdf.open(output_pdf) as pdf:
+            from accesspdf.processors._pdf_helpers import walk_struct_tree
+            elems = walk_struct_tree(pdf.Root["/StructTreeRoot"])
+            th_elems = [e for e in elems if str(e.get("/S", "")) == "/TH"]
+            assert len(th_elems) >= 1
+            for th in th_elems:
+                assert "/ID" in th, "TH cells should have an /ID attribute"
+
+    def test_th_has_scope(self, tables_pdf: Path, output_pdf: Path) -> None:
+        self._run(tables_pdf, output_pdf)
+        with pikepdf.open(output_pdf) as pdf:
+            from accesspdf.processors._pdf_helpers import walk_struct_tree
+            elems = walk_struct_tree(pdf.Root["/StructTreeRoot"])
+            th_elems = [e for e in elems if str(e.get("/S", "")) == "/TH"]
+            for th in th_elems:
+                assert "/A" in th, "TH cells should have /A attribute dict"
+                assert str(th["/A"].get("/Scope", "")) == "/Column"
+
+    def test_td_has_headers(self, tables_pdf: Path, output_pdf: Path) -> None:
+        self._run(tables_pdf, output_pdf)
+        with pikepdf.open(output_pdf) as pdf:
+            from accesspdf.processors._pdf_helpers import walk_struct_tree
+            elems = walk_struct_tree(pdf.Root["/StructTreeRoot"])
+            td_elems = [e for e in elems if str(e.get("/S", "")) == "/TD"]
+            assert len(td_elems) >= 1
+            for td in td_elems:
+                assert "/Headers" in td, "TD cells should have /Headers referencing column TH"
+
     def test_idempotent(self, tables_pdf: Path, output_pdf: Path) -> None:
         self._run(tables_pdf, output_pdf)
 
