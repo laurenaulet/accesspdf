@@ -229,9 +229,11 @@ def create_app() -> FastAPI:
         pending = [e for e in job.sidecar.images
                    if not e.ai_draft and e.status == AltTextStatus.NEEDS_REVIEW]
 
+        import asyncio
+
         generated = 0
         errors = []
-        for entry in pending:
+        for i, entry in enumerate(pending):
             img = extract_image(job.output_path, entry.hash)
             if img is None:
                 continue
@@ -251,6 +253,10 @@ def create_app() -> FastAPI:
                 generated += 1
             elif result.error:
                 errors.append({"image_id": entry.id, "error": result.error})
+
+            # Brief pause between requests to respect rate limits
+            if i < len(pending) - 1:
+                await asyncio.sleep(2)
 
         # Save sidecar
         if job.sidecar_path:
