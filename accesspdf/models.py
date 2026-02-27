@@ -120,3 +120,27 @@ class RemediationResult:
             for w in r.warnings:
                 out.append(f"[{r.processor_name}] {w}")
         return out
+
+
+@dataclass
+class BatchResult:
+    """Aggregate result from processing a batch of PDFs."""
+
+    results: list[RemediationResult] = field(default_factory=list)
+    failed: list[tuple[Path, str]] = field(default_factory=list)
+
+    @property
+    def total_files(self) -> int:
+        return len(self.results) + len(self.failed)
+
+    @property
+    def succeeded_count(self) -> int:
+        return len(self.results)
+
+    @property
+    def failed_count(self) -> int:
+        return len(self.failed)
+
+    @property
+    def total_changes(self) -> int:
+        return sum(r.total_changes for r in self.results)

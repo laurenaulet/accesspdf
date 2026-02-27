@@ -146,6 +146,111 @@ def review(
 
 
 @app.command()
+def batch(
+    directory: Path = typer.Argument(..., help="Directory containing PDF files to fix."),
+    output_dir: Optional[Path] = typer.Option(  # noqa: UP007
+        None, "--output-dir", "-o", help="Output directory. Defaults to <dir>/accessible/.",
+    ),
+    alt_text_dir: Optional[Path] = typer.Option(  # noqa: UP007
+        None, "--alt-text-dir", help="Directory with .alttext.yaml sidecar files to inject.",
+    ),
+    recursive: bool = typer.Option(False, "--recursive", "-r", help="Search subdirectories."),
+) -> None:
+    """Fix all PDFs in a directory at once."""
+    if not directory.is_dir():
+        console.print(f"[red]Not a directory:[/red] {directory}")
+        raise typer.Exit(code=1)
+
+    # Collect PDF files
+    pattern = "**/*.pdf" if recursive else "*.pdf"
+    pdf_files = sorted(directory.glob(pattern))
+    pdf_files = [p for p in pdf_files if p.is_file()]
+
+    if not pdf_files:
+        console.print(f"[dim]No PDF files found in {directory}[/dim]")
+        raise typer.Exit()
+
+    # Determine output directory
+    if output_dir is None:
+        output_dir = directory / "accessible"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    from accesspdf.models import BatchResult
+    from accesspdf.pipeline import run_pipeline
+    from rich.progress import Progress
+
+    batch_result = BatchResult()
+
+    console.print(f"[dim]Processing {len(pdf_files)} PDF(s) from {directory}[/dim]")
+    console.print(f"[dim]Output to: {output_dir}[/dim]")
+
+    with Progress(console=console) as progress:
+        task = progress.add_task("Fixing PDFs...", total=len(pdf_files))
+
+        for pdf_path in pdf_files:
+            out_path = output_dir / f"{pdf_path.stem}_accessible.pdf"
+
+            # Look for matching sidecar if alt_text_dir provided
+            sidecar_path = None
+            if alt_text_dir:
+                candidate = alt_text_dir / f"{pdf_path.stem}.alttext.yaml"
+                if candidate.is_file():
+                    sidecar_path = candidate
+
+            try:
+                result = run_pipeline(pdf_path, out_path, alt_text_sidecar=sidecar_path)
+                batch_result.results.append(result)
+            except Exception as exc:
+                batch_result.failed.append((pdf_path, str(exc)))
+
+            progress.advance(task)
+
+    # Summary table
+    table = Table(title="Batch Results")
+    table.add_column("Metric", style="bold")
+    table.add_column("Value")
+    table.add_row("Total files", str(batch_result.total_files))
+    table.add_row("Succeeded", f"[green]{batch_result.succeeded_count}[/green]")
+    if batch_result.failed_count > 0:
+        table.add_row("Failed", f"[red]{batch_result.failed_count}[/red]")
+    else:
+        table.add_row("Failed", "0")
+    table.add_row("Total changes", str(batch_result.total_changes))
+    console.print(table)
+
+    if batch_result.failed:
+        console.print()
+        for path, error in batch_result.failed:
+            console.print(f"  [red]X[/red] {path.name}: {error}")
+
+
+@app.command()
+def serve(
+    port: int = typer.Option(8080, "--port", "-p", help="Port to serve on."),
+    host: str = typer.Option("127.0.0.1", "--host", help="Host to bind to."),
+) -> None:
+    """Start web UI for browser-based alt text review."""
+    try:
+        import uvicorn
+    except ImportError:
+        console.print(
+            "[red]Web UI requires extra dependencies.[/red]\n"
+            "Install them with: [bold]pip install accesspdf\\[web\\][/bold]"
+        )
+        raise typer.Exit(code=1)
+
+    from accesspdf.web.app import create_app
+
+    console.print(f"[dim]Starting web UI at http://{host}:{port}[/dim]")
+
+    import webbrowser
+    webbrowser.open(f"http://{host}:{port}")
+
+    web_app = create_app()
+    uvicorn.run(web_app, host=host, port=port, log_level="warning")
+
+
+@app.command()
 def providers() -> None:
     """Show available AI providers and their status."""
     console.print("[dim]Provider availability check not yet implemented.[/dim]")
