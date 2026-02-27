@@ -109,6 +109,43 @@ def fix(
 
 
 @app.command()
+def review(
+    pdf: Path = typer.Argument(..., help="Path to a PDF (or its output) to review alt text."),
+) -> None:
+    """Open TUI to review and approve alt text for images."""
+    if not pdf.is_file():
+        console.print(f"[red]File not found:[/red] {pdf}")
+        raise typer.Exit(code=1)
+
+    from accesspdf.alttext.sidecar import SidecarManager
+
+    sidecar, sidecar_path = SidecarManager.load_or_create(pdf)
+
+    if not sidecar.images:
+        # Try to populate sidecar from the PDF's images
+        from accesspdf.analyzer import PDFAnalyzer
+
+        analysis = PDFAnalyzer().analyze(pdf)
+        if not analysis.images:
+            console.print("[dim]No images found in this PDF. Nothing to review.[/dim]")
+            raise typer.Exit()
+
+        for image in analysis.images:
+            sidecar.upsert(image)
+        SidecarManager.save(sidecar, sidecar_path)
+        console.print(f"[dim]Created sidecar with {len(sidecar.images)} image(s): {sidecar_path.name}[/dim]")
+
+    console.print(f"[dim]Reviewing {len(sidecar.images)} image(s) in {pdf.name}[/dim]")
+
+    from accesspdf.review.app import ReviewApp
+
+    app_instance = ReviewApp(pdf_path=pdf, sidecar=sidecar, sidecar_path=sidecar_path)
+    app_instance.run()
+
+    console.print(f"[green]OK[/green] Sidecar saved to {sidecar_path.name}")
+
+
+@app.command()
 def providers() -> None:
     """Show available AI providers and their status."""
     console.print("[dim]Provider availability check not yet implemented.[/dim]")

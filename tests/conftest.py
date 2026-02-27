@@ -48,6 +48,11 @@ def multicolumn_pdf(corpus_dir: Path) -> Path:
     return corpus_dir / "multicolumn.pdf"
 
 
+@pytest.fixture(scope="session")
+def images_pdf(corpus_dir: Path) -> Path:
+    return corpus_dir / "images.pdf"
+
+
 @pytest.fixture
 def output_pdf(tmp_path: Path) -> Path:
     """Temporary output path for remediated PDFs."""

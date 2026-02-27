@@ -11,8 +11,6 @@ import logging
 from pathlib import Path
 
 import pikepdf
-from pdfminer.high_level import extract_pages
-from pdfminer.layout import LTFigure, LTImage
 
 from accesspdf.models import (
     AccessibilityIssue,
@@ -42,8 +40,8 @@ class PDFAnalyzer:
             result.page_count = len(pdf.pages)
             self._check_metadata(pdf, result)
             self._check_tags(pdf, result)
+            self._extract_images_from_xobjects(pdf, result)
 
-        self._extract_images(pdf_path, result)
         self._build_issues(result)
 
         return result
@@ -98,11 +96,14 @@ class PDFAnalyzer:
         except Exception:
             logger.debug("Error walking struct tree node", exc_info=True)
 
-    def _extract_images(self, pdf_path: Path, result: AnalysisResult) -> None:
-        """Extract image metadata using pdfminer for position data."""
+    def _extract_images_from_xobjects(
+        self, pdf: pikepdf.Pdf, result: AnalysisResult
+    ) -> None:
+        """Extract all image XObjects from the PDF, deduplicating by hash."""
+        seen_hashes: set[str] = set()
         try:
-            for page_num, page_layout in enumerate(extract_pages(pdf_path), start=1):
-                self._scan_layout(page_layout, page_num, pdf_path, result)
+            for page_idx, page in enumerate(pdf.pages, start=1):
+                self._scan_page_xobjects(page, page_idx, seen_hashes, result)
         except Exception:
             logger.warning("Image extraction failed", exc_info=True)
             result.issues.append(
@@ -113,51 +114,96 @@ class PDFAnalyzer:
                 )
             )
 
-    def _scan_layout(
-        self, element: object, page: int, pdf_path: Path, result: AnalysisResult
+    def _scan_page_xobjects(
+        self,
+        page: pikepdf.Page,
+        page_num: int,
+        seen_hashes: set[str],
+        result: AnalysisResult,
     ) -> None:
-        """Recursively scan pdfminer layout elements for images."""
-        if isinstance(element, LTImage):
-            image_info = self._image_info_from_lt(element, page, pdf_path)
-            if image_info:
-                result.images.append(image_info)
+        """Scan a single page for image XObjects."""
+        if "/Resources" not in page or "/XObject" not in page["/Resources"]:
+            return
 
-        if isinstance(element, LTFigure):
-            for child in element:
-                self._scan_layout(child, page, pdf_path, result)
-        elif hasattr(element, "__iter__"):
-            for child in element:  # type: ignore[union-attr]
-                self._scan_layout(child, page, pdf_path, result)
+        for _name, xobj_ref in page["/Resources"]["/XObject"].items():
+            try:
+                xobj = xobj_ref.resolve() if hasattr(xobj_ref, "resolve") else xobj_ref
+                if not isinstance(xobj, pikepdf.Stream):
+                    continue
 
-    def _image_info_from_lt(
-        self, lt_image: LTImage, page: int, pdf_path: Path
-    ) -> ImageInfo | None:
-        """Build an ImageInfo from a pdfminer LTImage, hashing via pikepdf."""
+                # Skip form XObjects that aren't images — check /Subtype
+                subtype = str(xobj.get("/Subtype", ""))
+                if subtype == "/Form":
+                    # Form XObjects can contain images; recurse into them
+                    self._scan_form_xobject(xobj, page_num, seen_hashes, result)
+                    continue
+                if subtype != "/Image":
+                    continue
+
+                raw = bytes(xobj.read_raw_bytes())
+                img_hash = hashlib.md5(raw).hexdigest()
+
+                if img_hash in seen_hashes:
+                    continue
+                seen_hashes.add(img_hash)
+
+                w = int(xobj.get("/Width", 0))
+                h = int(xobj.get("/Height", 0))
+                cs = str(xobj.get("/ColorSpace", ""))
+
+                result.images.append(
+                    ImageInfo(
+                        image_hash=img_hash,
+                        page=page_num,
+                        width=w,
+                        height=h,
+                        color_space=cs,
+                    )
+                )
+            except Exception:
+                logger.debug("Could not process XObject on page %d", page_num, exc_info=True)
+
+    def _scan_form_xobject(
+        self,
+        form_xobj: pikepdf.Stream,
+        page_num: int,
+        seen_hashes: set[str],
+        result: AnalysisResult,
+    ) -> None:
+        """Recurse into a Form XObject to find embedded images."""
         try:
-            with pikepdf.open(pdf_path) as pdf:
-                for pg in pdf.pages:
-                    if "/Resources" not in pg or "/XObject" not in pg["/Resources"]:
-                        continue
-                    for _name, xobj in pg["/Resources"]["/XObject"].items():
-                        xobj = xobj.resolve() if hasattr(xobj, "resolve") else xobj
-                        if not isinstance(xobj, pikepdf.Stream):
-                            continue
-                        raw = bytes(xobj.read_raw_bytes())
-                        img_hash = hashlib.md5(raw).hexdigest()
-                        w = int(xobj.get("/Width", 0))
-                        h = int(xobj.get("/Height", 0))
-                        cs = str(xobj.get("/ColorSpace", ""))
-                        return ImageInfo(
-                            image_hash=img_hash,
-                            page=page,
-                            width=w,
-                            height=h,
-                            color_space=cs,
-                            bbox=(lt_image.x0, lt_image.y0, lt_image.x1, lt_image.y1),
-                        )
+            resources = form_xobj.get("/Resources")
+            if resources is None or "/XObject" not in resources:
+                return
+            for _name, inner_ref in resources["/XObject"].items():
+                inner = inner_ref.resolve() if hasattr(inner_ref, "resolve") else inner_ref
+                if not isinstance(inner, pikepdf.Stream):
+                    continue
+                subtype = str(inner.get("/Subtype", ""))
+                if subtype != "/Image":
+                    continue
+
+                raw = bytes(inner.read_raw_bytes())
+                img_hash = hashlib.md5(raw).hexdigest()
+                if img_hash in seen_hashes:
+                    continue
+                seen_hashes.add(img_hash)
+
+                w = int(inner.get("/Width", 0))
+                h = int(inner.get("/Height", 0))
+                cs = str(inner.get("/ColorSpace", ""))
+
+                result.images.append(
+                    ImageInfo(
+                        image_hash=img_hash,
+                        page=page_num,
+                        width=w,
+                        height=h,
+                        color_space=cs,
+                    )
+                )
         except Exception:
-            logger.debug("Could not hash image on page %d", page, exc_info=True)
-        return None
+            logger.debug("Could not scan form XObject on page %d", page_num, exc_info=True)
 
     def _build_issues(self, result: AnalysisResult) -> None:
         """Generate accessibility issues from the analysis result."""

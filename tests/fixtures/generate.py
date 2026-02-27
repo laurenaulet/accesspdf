@@ -9,6 +9,7 @@ from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import inch
 from reportlab.platypus import (
+    Image,
     Paragraph,
     SimpleDocTemplate,
     Spacer,
@@ -28,6 +29,7 @@ def generate_all() -> dict[str, Path]:
         "tables": generate_tables_pdf(CORPUS_DIR),
         "links": generate_links_pdf(CORPUS_DIR),
         "multicolumn": generate_multicolumn_pdf(CORPUS_DIR),
+        "images": generate_images_pdf(CORPUS_DIR),
     }
 
 
@@ -178,6 +180,72 @@ def generate_multicolumn_pdf(output_dir: Path) -> Path:
     c.drawText(text_obj)
 
     c.save()
+    return path
+
+
+def generate_images_pdf(output_dir: Path) -> Path:
+    """PDF with embedded images for alt text testing."""
+    import io
+    import tempfile
+
+    from PIL import Image as PILImage, ImageDraw
+
+    path = output_dir / "images.pdf"
+
+    # Create synthetic images as temporary files (reportlab needs file paths)
+    img_files: list[str] = []
+    temp_dir = Path(tempfile.mkdtemp())
+
+    # Image 1: blue rectangle with a circle (simulating a chart)
+    img1 = PILImage.new("RGB", (200, 150), color=(240, 240, 255))
+    draw1 = ImageDraw.Draw(img1)
+    draw1.rectangle([20, 20, 180, 130], outline=(0, 0, 180), width=2)
+    draw1.ellipse([60, 40, 140, 110], fill=(0, 100, 200))
+    img1_path = temp_dir / "chart.png"
+    img1.save(str(img1_path))
+    img_files.append(str(img1_path))
+
+    # Image 2: red/green gradient (simulating a photo)
+    img2 = PILImage.new("RGB", (160, 120), color=(200, 255, 200))
+    draw2 = ImageDraw.Draw(img2)
+    draw2.polygon([(80, 10), (150, 110), (10, 110)], fill=(200, 50, 50))
+    img2_path = temp_dir / "photo.png"
+    img2.save(str(img2_path))
+    img_files.append(str(img2_path))
+
+    # Image 3: small icon (simulating a decorative element)
+    img3 = PILImage.new("RGB", (40, 40), color=(255, 255, 255))
+    draw3 = ImageDraw.Draw(img3)
+    draw3.ellipse([5, 5, 35, 35], fill=(255, 200, 0))
+    img3_path = temp_dir / "icon.png"
+    img3.save(str(img3_path))
+    img_files.append(str(img3_path))
+
+    doc = SimpleDocTemplate(str(path), pagesize=letter)
+    styles = getSampleStyleSheet()
+
+    story = [
+        Paragraph("Images Test Document", styles["Title"]),
+        Spacer(1, 12),
+        Paragraph("Below is a chart showing sample data:", styles["Normal"]),
+        Spacer(1, 6),
+        Image(img_files[0], width=200, height=150),
+        Spacer(1, 12),
+        Paragraph("Here is a photograph from the field study:", styles["Normal"]),
+        Spacer(1, 6),
+        Image(img_files[1], width=160, height=120),
+        Spacer(1, 12),
+        Paragraph("Decorative separator:", styles["Normal"]),
+        Image(img_files[2], width=40, height=40),
+        Spacer(1, 12),
+        Paragraph("This text follows the images.", styles["Normal"]),
+    ]
+    doc.build(story)
+
+    # Clean up temp files
+    import shutil
+    shutil.rmtree(temp_dir, ignore_errors=True)
+
     return path
 
 
