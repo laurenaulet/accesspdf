@@ -1,0 +1,140 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "accesspdf"
+version = "0.1.0"
+description = "AI-powered PDF accessibility remediation, at scale"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+keywords = ["pdf", "accessibility", "wcag", "a11y", "alt-text"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Education",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: Apache Software License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Text Processing :: Markup",
+  "Topic :: Utilities",
+]
+
+# Core dependencies — required for structural fixes and manual alt text workflow.
+# No API key or network access needed for these.
+dependencies = [
+  "pikepdf>=8.0,<10.0",
+  "pdfminer.six>=20221105",
+  "Pillow>=10.0",
+  "typer>=0.12",
+  "pydantic>=2.0",
+  "PyYAML>=6.0",
+  "textual>=0.50",
+  "jinja2>=3.1",
+  "langdetect>=1.0.9",
+  "httpx>=0.27",        # used by OllamaProvider
+  "rich>=13.0",         # typer dependency; also used in reporter
+]
+
+[project.optional-dependencies]
+# Install individual providers as needed, e.g.: pip install accesspdf[anthropic]
+anthropic = ["anthropic>=0.25"]
+openai    = ["openai>=1.25"]
+gemini    = ["google-generativeai>=0.5"]
+
+# All cloud providers at once
+all-providers = [
+  "anthropic>=0.25",
+  "openai>=1.25",
+  "google-generativeai>=0.5",
+]
+
+# Development dependencies
+dev = [
+  "pytest>=8.0",
+  "pytest-cov>=5.0",
+  "pytest-vcr>=1.0",        # record/replay HTTP calls for offline CI
+  "pytest-asyncio>=0.23",
+  "vcrpy>=6.0",
+  "reportlab>=4.0",         # generate synthetic test PDFs
+  "mypy>=1.9",
+  "ruff>=0.4",
+  "types-PyYAML",
+  "types-Pillow",
+]
+
+# Everything for local development
+all = ["accesspdf[all-providers,dev]"]
+
+[project.scripts]
+accesspdf = "accesspdf.cli:app"
+
+[project.urls]
+Homepage    = "https://github.com/your-org/accesspdf"
+Repository  = "https://github.com/your-org/accesspdf"
+Issues      = "https://github.com/your-org/accesspdf/issues"
+Changelog   = "https://github.com/your-org/accesspdf/CHANGELOG.md"
+
+# ── Hatch environments ────────────────────────────────────────────────────────
+
+[tool.hatch.envs.default]
+features = ["dev", "all-providers"]
+
+[tool.hatch.envs.default.scripts]
+test        = "pytest {args:tests}"
+test-cov    = "pytest --cov=accesspdf --cov-report=term-missing {args:tests}"
+typecheck   = "mypy accesspdf"
+lint        = "ruff check accesspdf tests"
+fmt         = "ruff format accesspdf tests"
+
+[tool.hatch.envs.ci]
+features = ["dev"]   # no cloud providers in CI; use VCR cassettes
+
+[tool.hatch.envs.ci.scripts]
+test = "pytest -m 'not live_api' {args:tests}"
+
+# ── Pytest ────────────────────────────────────────────────────────────────────
+
+[tool.pytest.ini_options]
+testpaths    = ["tests"]
+asyncio_mode = "auto"
+markers = [
+  "live_api: marks tests that make real API calls (skipped in CI)",
+  "slow: marks slow tests (deselect with -m 'not slow')",
+]
+
+# ── Ruff ─────────────────────────────────────────────────────────────────────
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = ["E501"]  # line length handled by formatter
+
+# ── Mypy ─────────────────────────────────────────────────────────────────────
+
+[tool.mypy]
+python_version         = "3.10"
+strict                 = true
+ignore_missing_imports = true
+
+# ── Coverage ─────────────────────────────────────────────────────────────────
+
+[tool.coverage.run]
+source   = ["accesspdf"]
+omit     = ["accesspdf/providers/*"]  # providers tested via VCR; omit from branch coverage
+
+[tool.coverage.report]
+exclude_lines = [
+  "pragma: no cover",
+  "if TYPE_CHECKING:",
+  "raise NotImplementedError",
+  "@(abc\\.)?abstractmethod",
+]

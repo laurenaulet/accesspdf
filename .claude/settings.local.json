@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git init)",
+      "Bash(pip install -e \".[dev]\")",
+      "Bash(python -m pytest tests/ -v)",
+      "Bash(python -m accesspdf --version)",
+      "Bash(python -m accesspdf --help)",
+      "Bash(git add .gitignore LICENSE README.md pyproject.toml accesspdf/ tests/ docs/ OldDocs/ files/ .claude/)"
+    ]
+  }
+}
