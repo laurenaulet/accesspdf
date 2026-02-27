@@ -14,13 +14,14 @@ from accesspdf.processors.base import Processor
 logger = logging.getLogger(__name__)
 
 # Processors are registered here in execution order.
-# Each Phase-1 processor will be appended to this list.
 _PROCESSORS: list[type[Processor]] = []
+_all_registered: bool = False
 
 
 def register_processor(cls: type[Processor]) -> type[Processor]:
     """Class decorator that adds a processor to the pipeline registry."""
-    _PROCESSORS.append(cls)
+    if cls not in _PROCESSORS:
+        _PROCESSORS.append(cls)
     return cls
 
 
@@ -36,6 +37,13 @@ def run_pipeline(
     2. Runs each registered processor in order.
     3. Optionally injects approved alt text from a sidecar file.
     """
+    # Ensure all processors are registered (lazy to avoid circular imports)
+    global _all_registered
+    if not _all_registered:
+        from accesspdf.processors import _register_all
+        _register_all()
+        _all_registered = True
+
     result = RemediationResult(source_path=input_path, output_path=output_path)
 
     # Step 1: Copy to output so we only ever mutate the copy
