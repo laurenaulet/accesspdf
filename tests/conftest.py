@@ -6,11 +6,52 @@ from pathlib import Path
 
 import pytest
 
+from tests.fixtures.generate import CORPUS_DIR, generate_all
+
 
 @pytest.fixture
 def tmp_dir(tmp_path: Path) -> Path:
     """Alias for pytest's tmp_path fixture."""
     return tmp_path
+
+
+@pytest.fixture(scope="session")
+def corpus_dir() -> Path:
+    """Ensure test PDFs exist and return the corpus directory."""
+    CORPUS_DIR.mkdir(parents=True, exist_ok=True)
+    generate_all()
+    return CORPUS_DIR
+
+
+@pytest.fixture(scope="session")
+def simple_pdf(corpus_dir: Path) -> Path:
+    return corpus_dir / "simple.pdf"
+
+
+@pytest.fixture(scope="session")
+def headings_pdf(corpus_dir: Path) -> Path:
+    return corpus_dir / "headings.pdf"
+
+
+@pytest.fixture(scope="session")
+def tables_pdf(corpus_dir: Path) -> Path:
+    return corpus_dir / "tables.pdf"
+
+
+@pytest.fixture(scope="session")
+def links_pdf(corpus_dir: Path) -> Path:
+    return corpus_dir / "links.pdf"
+
+
+@pytest.fixture(scope="session")
+def multicolumn_pdf(corpus_dir: Path) -> Path:
+    return corpus_dir / "multicolumn.pdf"
+
+
+@pytest.fixture
+def output_pdf(tmp_path: Path) -> Path:
+    """Temporary output path for remediated PDFs."""
+    return tmp_path / "output.pdf"
 
 
 @pytest.fixture

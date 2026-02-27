@@ -66,7 +66,7 @@ def check(
     if result.issues:
         console.print()
         for issue in result.issues:
-            icon = "[red]\u2717[/red]" if issue.severity.value == "error" else "[yellow]![/yellow]"
+            icon = "[red]X[/red]" if issue.severity.value == "error" else "[yellow]![/yellow]"
             console.print(f"  {icon} [{issue.rule}] {issue.message}")
 
 
@@ -101,7 +101,7 @@ def fix(
     result = run_pipeline(pdf, output, alt_text_sidecar=alt_text)
 
     if result.all_succeeded:
-        console.print(f"[green]\u2713[/green] Done — {result.total_changes} change(s) applied.")
+        console.print(f"[green]OK[/green] Done -- {result.total_changes} change(s) applied.")
     else:
         console.print("[yellow]Completed with warnings.[/yellow]")
         for w in result.warnings:
