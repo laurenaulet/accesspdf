@@ -1,8 +1,8 @@
 """TablesProcessor — detects simple ruled tables and creates table structure tags.
 
-Phase 1 scope: only handles tables with visible ruling lines forming a regular
-grid.  Complex table detection (merged cells, whitespace-only) is deferred to
-Phase 4.
+Handles tables with visible ruling lines forming a regular grid.  Header cells
+(TH) get unique /ID attributes and /Scope, and data cells (TD) get /Headers
+references so screen readers can associate cells with their headers.
 """
 
 from __future__ import annotations
@@ -80,9 +80,16 @@ class TablesProcessor:
         else:
             return ProcessorResult(processor_name=self.name, changes_made=0)
 
+        table_counter = 0
         for grid in grids:
+            table_counter += 1
             page = pdf.pages[grid.page_idx]
             table_elem = make_struct_elem(pdf, "Table", doc_elem, page=page)
+
+            # Build header IDs so data cells can reference them
+            header_ids: list[str] = []
+            for col_idx in range(grid.num_cols):
+                header_ids.append(f"t{table_counter}_c{col_idx + 1}")
 
             for row_idx in range(grid.num_rows):
                 tr_elem = make_struct_elem(pdf, "TR", table_elem, page=page)
@@ -92,10 +99,16 @@ class TablesProcessor:
                     cell_tag = "TH" if row_idx == 0 else "TD"
                     cell_elem = make_struct_elem(pdf, cell_tag, tr_elem, page=page)
                     if row_idx == 0:
+                        cell_elem["/ID"] = pikepdf.String(header_ids[col_idx])
                         cell_elem["/A"] = pikepdf.Dictionary({
                             "/O": pikepdf.Name("/Table"),
                             "/Scope": pikepdf.Name("/Column"),
                         })
+                    else:
+                        # Data cells reference their column header
+                        cell_elem["/Headers"] = pikepdf.Array([
+                            pikepdf.String(header_ids[col_idx])
+                        ])
                     add_kid(tr_elem, cell_elem)
 
             add_kid(doc_elem, table_elem)

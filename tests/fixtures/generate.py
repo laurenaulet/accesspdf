@@ -30,6 +30,8 @@ def generate_all() -> dict[str, Path]:
         "links": generate_links_pdf(CORPUS_DIR),
         "multicolumn": generate_multicolumn_pdf(CORPUS_DIR),
         "images": generate_images_pdf(CORPUS_DIR),
+        "low_contrast": generate_low_contrast_pdf(CORPUS_DIR),
+        "ambiguous_links": generate_ambiguous_links_pdf(CORPUS_DIR),
     }
 
 
@@ -246,6 +248,62 @@ def generate_images_pdf(output_dir: Path) -> Path:
     import shutil
     shutil.rmtree(temp_dir, ignore_errors=True)
 
+    return path
+
+
+def generate_low_contrast_pdf(output_dir: Path) -> Path:
+    """PDF with light gray text on white background — fails WCAG AA contrast."""
+    path = output_dir / "low_contrast.pdf"
+
+    from reportlab.pdfgen import canvas
+
+    c = canvas.Canvas(str(path), pagesize=letter)
+    width, height = letter
+
+    # Light gray text (RGB ~0.85) on white: contrast ratio ~1.9:1, well below 4.5:1
+    c.setFillColorRGB(0.85, 0.85, 0.85)
+    text_obj = c.beginText(72, height - 72)
+    text_obj.setFont("Helvetica", 12)
+    text_obj.textLine("This text is very light gray and hard to read.")
+    text_obj.textLine("It should fail WCAG AA contrast requirements.")
+    c.drawText(text_obj)
+
+    # Also add some readable black text for comparison
+    c.setFillColorRGB(0, 0, 0)
+    text_obj2 = c.beginText(72, height - 150)
+    text_obj2.setFont("Helvetica", 12)
+    text_obj2.textLine("This text is black and fully readable.")
+    c.drawText(text_obj2)
+
+    c.save()
+    return path
+
+
+def generate_ambiguous_links_pdf(output_dir: Path) -> Path:
+    """PDF with ambiguous link text like 'click here' and bare URLs."""
+    path = output_dir / "ambiguous_links.pdf"
+    doc = SimpleDocTemplate(str(path), pagesize=letter)
+    styles = getSampleStyleSheet()
+
+    story = [
+        Paragraph("Ambiguous Links Test", styles["Title"]),
+        Spacer(1, 12),
+        Paragraph(
+            'For more information, <a href="https://example.com">click here</a>.',
+            styles["Normal"],
+        ),
+        Spacer(1, 12),
+        Paragraph(
+            'Visit <a href="https://example.org">https://example.org</a> for details.',
+            styles["Normal"],
+        ),
+        Spacer(1, 12),
+        Paragraph(
+            '<a href="https://good.example.com">AccessPDF Documentation</a> is also available.',
+            styles["Normal"],
+        ),
+    ]
+    doc.build(story)
     return path
 
 

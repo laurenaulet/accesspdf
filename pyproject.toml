@@ -4,14 +4,14 @@ build-backend = "hatchling.build"
 
 [project]
 name = "accesspdf"
-version = "0.1.0"
+version = "1.0.0"
 description = "AI-powered PDF accessibility remediation, at scale"
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.10"
 keywords = ["pdf", "accessibility", "wcag", "a11y", "alt-text"]
 classifiers = [
-  "Development Status :: 3 - Alpha",
+  "Development Status :: 4 - Beta",
   "Environment :: Console",
   "Intended Audience :: Developers",
   "Intended Audience :: Education",
@@ -86,10 +86,10 @@ all = ["accesspdf[all-providers,web,dev]"]
 accesspdf = "accesspdf.cli:app"
 
 [project.urls]
-Homepage    = "https://github.com/your-org/accesspdf"
-Repository  = "https://github.com/your-org/accesspdf"
-Issues      = "https://github.com/your-org/accesspdf/issues"
-Changelog   = "https://github.com/your-org/accesspdf/CHANGELOG.md"
+Homepage    = "https://github.com/laurenaulet/accesspdf"
+Repository  = "https://github.com/laurenaulet/accesspdf"
+Issues      = "https://github.com/laurenaulet/accesspdf/issues"
+Changelog   = "https://github.com/laurenaulet/accesspdf/CHANGELOG.md"
 
 # ── Hatch environments ────────────────────────────────────────────────────────
 
