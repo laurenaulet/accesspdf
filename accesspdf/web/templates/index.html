@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AccessPDF — PDF Accessibility Tool</title>
+<style>
+  :root {
+    --bg: #f8f9fa; --fg: #212529; --accent: #0d6efd; --accent-hover: #0a58ca;
+    --success: #198754; --warning: #ffc107; --danger: #dc3545;
+    --card: #fff; --border: #dee2e6; --muted: #6c757d;
+    --radius: 8px; --shadow: 0 1px 3px rgba(0,0,0,.1);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg); color: var(--fg); line-height: 1.5; }
+
+  .container { max-width: 960px; margin: 0 auto; padding: 1.5rem; }
+
+  header { text-align: center; padding: 2rem 0 1rem; }
+  header h1 { font-size: 1.75rem; font-weight: 700; }
+  header p { color: var(--muted); margin-top: .25rem; }
+
+  /* Drop zone */
+  #drop-zone {
+    border: 2px dashed var(--border); border-radius: var(--radius);
+    padding: 3rem 2rem; text-align: center; cursor: pointer;
+    transition: border-color .2s, background .2s;
+    background: var(--card);
+  }
+  #drop-zone.drag-over { border-color: var(--accent); background: #e7f1ff; }
+  #drop-zone p { font-size: 1.1rem; color: var(--muted); }
+  #drop-zone .icon { font-size: 2.5rem; margin-bottom: .5rem; }
+  #file-input { display: none; }
+
+  /* Progress */
+  #progress { display: none; text-align: center; padding: 2rem; }
+  .spinner { display: inline-block; width: 2rem; height: 2rem;
+    border: 3px solid var(--border); border-top-color: var(--accent);
+    border-radius: 50%; animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Error */
+  .error-msg { background: #f8d7da; color: #842029; padding: .75rem 1rem;
+    border-radius: var(--radius); margin: 1rem 0; }
+
+  /* Results section */
+  #results { display: none; }
+  .summary-bar {
+    display: flex; gap: 1rem; flex-wrap: wrap; align-items: center;
+    background: var(--card); border-radius: var(--radius); padding: 1rem;
+    box-shadow: var(--shadow); margin-bottom: 1.5rem;
+  }
+  .summary-bar .filename { font-weight: 600; flex: 1; }
+  .summary-bar .stat { font-size: .875rem; color: var(--muted); }
+  .summary-bar .stat b { color: var(--fg); }
+
+  .actions-bar { display: flex; gap: .75rem; margin-bottom: 1.5rem; flex-wrap: wrap; }
+
+  /* Image cards */
+  .image-card {
+    background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow);
+    padding: 1.25rem; margin-bottom: 1.25rem;
+  }
+  .image-card .card-header {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: .75rem;
+  }
+  .image-card .card-header h3 { font-size: .95rem; font-weight: 600; }
+  .image-card .badge {
+    font-size: .75rem; padding: .2rem .5rem; border-radius: 4px;
+    font-weight: 600; text-transform: uppercase;
+  }
+  .badge-needs_review { background: var(--warning); color: #000; }
+  .badge-approved { background: var(--success); color: #fff; }
+  .badge-decorative { background: var(--muted); color: #fff; }
+
+  .image-card .image-preview {
+    max-width: 100%; max-height: 300px; border-radius: 4px;
+    background: #eee; display: block; margin-bottom: .75rem;
+  }
+  .image-card textarea {
+    width: 100%; min-height: 80px; padding: .5rem; border: 1px solid var(--border);
+    border-radius: 4px; font-family: inherit; font-size: .9rem; resize: vertical;
+  }
+  .image-card textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px rgba(13,110,253,.25); }
+
+  .card-actions { display: flex; gap: .5rem; margin-top: .75rem; flex-wrap: wrap; }
+
+  /* Buttons */
+  .btn {
+    display: inline-flex; align-items: center; gap: .35rem;
+    padding: .45rem .9rem; border: none; border-radius: 4px;
+    font-size: .875rem; font-weight: 500; cursor: pointer; transition: background .15s;
+  }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-primary:hover { background: var(--accent-hover); }
+  .btn-success { background: var(--success); color: #fff; }
+  .btn-success:hover { background: #157347; }
+  .btn-secondary { background: #6c757d; color: #fff; }
+  .btn-secondary:hover { background: #565e64; }
+  .btn-outline { background: transparent; color: var(--fg); border: 1px solid var(--border); }
+  .btn-outline:hover { background: #e9ecef; }
+  .btn:disabled { opacity: .5; cursor: not-allowed; }
+
+  .no-images { text-align: center; padding: 2rem; color: var(--muted); }
+
+  footer { text-align: center; color: var(--muted); font-size: .8rem; padding: 2rem 0 1rem; }
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <h1>AccessPDF</h1>
+    <p>Upload a PDF to fix accessibility issues and add image descriptions</p>
+  </header>
+
+  <!-- Upload -->
+  <div id="upload-section">
+    <div id="drop-zone" tabindex="0" role="button" aria-label="Upload PDF file">
+      <div class="icon" aria-hidden="true">&#128196;</div>
+      <p>Drag &amp; drop a PDF here, or click to browse</p>
+    </div>
+    <input type="file" id="file-input" accept=".pdf">
+  </div>
+
+  <!-- Processing -->
+  <div id="progress">
+    <div class="spinner" aria-label="Processing"></div>
+    <p style="margin-top:.75rem">Processing your PDF&hellip;</p>
+  </div>
+
+  <!-- Results -->
+  <div id="results">
+    <div class="summary-bar">
+      <span class="filename" id="result-filename"></span>
+      <span class="stat">Images: <b id="stat-total">0</b></span>
+      <span class="stat">Approved: <b id="stat-approved">0</b></span>
+      <span class="stat">Needs review: <b id="stat-needs">0</b></span>
+    </div>
+
+    <div class="actions-bar">
+      <button class="btn btn-primary" id="btn-save" disabled>Save alt text</button>
+      <button class="btn btn-success" id="btn-download" disabled>Download fixed PDF</button>
+      <button class="btn btn-outline" id="btn-new">Upload another</button>
+    </div>
+
+    <div id="image-list"></div>
+  </div>
+
+  <footer>AccessPDF &mdash; open-source PDF accessibility tool</footer>
+</div>
+
+<script>
+(function() {
+  const dropZone = document.getElementById("drop-zone");
+  const fileInput = document.getElementById("file-input");
+  const uploadSection = document.getElementById("upload-section");
+  const progressDiv = document.getElementById("progress");
+  const resultsDiv = document.getElementById("results");
+  const imageList = document.getElementById("image-list");
+  const btnSave = document.getElementById("btn-save");
+  const btnDownload = document.getElementById("btn-download");
+  const btnNew = document.getElementById("btn-new");
+
+  let currentJobId = null;
+  let imageData = [];  // mirrors server state
+
+  // --- Upload handling ---
+  dropZone.addEventListener("click", () => fileInput.click());
+  dropZone.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") fileInput.click(); });
+  fileInput.addEventListener("change", () => { if (fileInput.files.length) upload(fileInput.files[0]); });
+
+  dropZone.addEventListener("dragover", (e) => { e.preventDefault(); dropZone.classList.add("drag-over"); });
+  dropZone.addEventListener("dragleave", () => dropZone.classList.remove("drag-over"));
+  dropZone.addEventListener("drop", (e) => {
+    e.preventDefault();
+    dropZone.classList.remove("drag-over");
+    if (e.dataTransfer.files.length) upload(e.dataTransfer.files[0]);
+  });
+
+  async function upload(file) {
+    if (!file.name.toLowerCase().endsWith(".pdf")) {
+      alert("Please upload a PDF file.");
+      return;
+    }
+
+    uploadSection.style.display = "none";
+    progressDiv.style.display = "block";
+    resultsDiv.style.display = "none";
+
+    const form = new FormData();
+    form.append("file", file);
+
+    try {
+      const resp = await fetch("/api/upload", { method: "POST", body: form });
+      const data = await resp.json();
+
+      if (!resp.ok) {
+        showError(data.detail || "Upload failed.");
+        return;
+      }
+      if (data.error) {
+        showError("Processing error: " + data.error);
+        return;
+      }
+
+      currentJobId = data.job_id;
+      imageData = data.images || [];
+      showResults(data);
+    } catch (err) {
+      showError("Network error: " + err.message);
+    }
+  }
+
+  function showError(msg) {
+    progressDiv.style.display = "none";
+    uploadSection.style.display = "block";
+    const el = document.createElement("div");
+    el.className = "error-msg";
+    el.textContent = msg;
+    uploadSection.insertBefore(el, uploadSection.firstChild);
+    setTimeout(() => el.remove(), 8000);
+  }
+
+  // --- Results display ---
+  function showResults(data) {
+    progressDiv.style.display = "none";
+    resultsDiv.style.display = "block";
+
+    document.getElementById("result-filename").textContent = data.filename || "PDF";
+    updateStats(data.stats);
+
+    imageList.innerHTML = "";
+    if (imageData.length === 0) {
+      imageList.innerHTML = '<div class="no-images">No images found in this PDF. Structural fixes have been applied.</div>';
+      btnDownload.disabled = false;
+      return;
+    }
+
+    imageData.forEach((img, idx) => {
+      imageList.appendChild(createImageCard(img, idx));
+    });
+
+    btnSave.disabled = false;
+    btnDownload.disabled = false;
+  }
+
+  function updateStats(stats) {
+    if (!stats) return;
+    document.getElementById("stat-total").textContent = stats.total || 0;
+    document.getElementById("stat-approved").textContent = stats.approved || 0;
+    document.getElementById("stat-needs").textContent = stats.needs_review || 0;
+  }
+
+  function createImageCard(img, idx) {
+    const card = document.createElement("div");
+    card.className = "image-card";
+    card.dataset.hash = img.image_hash;
+
+    card.innerHTML = `
+      <div class="card-header">
+        <h3>${img.id} (page ${img.page})</h3>
+        <span class="badge badge-${img.status}">${img.status.replace("_", " ")}</span>
+      </div>
+      <img class="image-preview" src="/api/job/${currentJobId}/image/${img.image_hash}"
+           alt="Image from page ${img.page}" loading="lazy">
+      <label for="alt-${idx}">Alt text:</label>
+      <textarea id="alt-${idx}" placeholder="Describe this image for screen readers&hellip;"
+        >${img.alt_text || img.ai_draft || ""}</textarea>
+      <div class="card-actions">
+        <button class="btn btn-success btn-approve" data-idx="${idx}">Approve</button>
+        <button class="btn btn-secondary btn-decorative" data-idx="${idx}">Mark decorative</button>
+      </div>
+    `;
+    return card;
+  }
+
+  // --- Actions ---
+  imageList.addEventListener("click", (e) => {
+    const btn = e.target.closest("button");
+    if (!btn) return;
+    const idx = parseInt(btn.dataset.idx);
+    const card = btn.closest(".image-card");
+    const badge = card.querySelector(".badge");
+    const textarea = card.querySelector("textarea");
+
+    if (btn.classList.contains("btn-approve")) {
+      imageData[idx].status = "approved";
+      imageData[idx].alt_text = textarea.value;
+      badge.className = "badge badge-approved";
+      badge.textContent = "approved";
+    } else if (btn.classList.contains("btn-decorative")) {
+      imageData[idx].status = "decorative";
+      imageData[idx].alt_text = "";
+      textarea.value = "";
+      badge.className = "badge badge-decorative";
+      badge.textContent = "decorative";
+    }
+  });
+
+  btnSave.addEventListener("click", async () => {
+    btnSave.disabled = true;
+    btnSave.textContent = "Saving\u2026";
+
+    const updates = imageData.map(img => ({
+      image_hash: img.image_hash,
+      alt_text: img.alt_text,
+      status: img.status,
+    }));
+
+    // Sync textarea values
+    document.querySelectorAll(".image-card").forEach((card, idx) => {
+      const ta = card.querySelector("textarea");
+      if (ta) updates[idx].alt_text = ta.value;
+    });
+
+    try {
+      await fetch(`/api/job/${currentJobId}/alt-text`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(updates),
+      });
+
+      // Refresh stats
+      const resp = await fetch(`/api/job/${currentJobId}`);
+      const data = await resp.json();
+      updateStats(data.stats);
+
+      btnSave.textContent = "Saved!";
+      setTimeout(() => { btnSave.textContent = "Save alt text"; btnSave.disabled = false; }, 1500);
+    } catch (err) {
+      btnSave.textContent = "Save alt text";
+      btnSave.disabled = false;
+      alert("Save failed: " + err.message);
+    }
+  });
+
+  btnDownload.addEventListener("click", async () => {
+    btnDownload.disabled = true;
+    btnDownload.textContent = "Preparing\u2026";
+
+    try {
+      // Inject alt text first
+      await fetch(`/api/job/${currentJobId}/inject`, { method: "POST" });
+
+      // Trigger download
+      const a = document.createElement("a");
+      a.href = `/api/job/${currentJobId}/download`;
+      a.download = "";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+
+      btnDownload.textContent = "Download fixed PDF";
+      btnDownload.disabled = false;
+    } catch (err) {
+      btnDownload.textContent = "Download fixed PDF";
+      btnDownload.disabled = false;
+      alert("Download failed: " + err.message);
+    }
+  });
+
+  btnNew.addEventListener("click", () => {
+    currentJobId = null;
+    imageData = [];
+    resultsDiv.style.display = "none";
+    uploadSection.style.display = "block";
+    fileInput.value = "";
+  });
+})();
+</script>
+</body>
+</html>
