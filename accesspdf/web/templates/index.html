@@ -157,6 +157,34 @@
 
   .no-images { text-align: center; padding: 2rem; color: var(--muted); }
 
+  /* Accessibility report panel */
+  .report-panel {
+    background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow);
+    padding: 1.25rem; margin-bottom: 1rem;
+  }
+  .report-panel h3 { font-size: 1rem; font-weight: 600; margin-bottom: .75rem; }
+  .report-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: .4rem .75rem;
+    font-size: .875rem; margin-bottom: .75rem;
+  }
+  .report-grid .label { color: var(--muted); }
+  .report-grid .value { font-weight: 500; }
+  .report-grid .pass { color: var(--success); }
+  .report-grid .fail { color: var(--danger); }
+  .report-issues { margin-top: .75rem; font-size: .85rem; }
+  .report-issues .issue {
+    padding: .35rem .6rem; margin-bottom: .35rem; border-radius: 4px;
+    display: flex; gap: .5rem; align-items: baseline;
+  }
+  .issue-error { background: #f8d7da; color: #842029; }
+  .issue-warning { background: #fff3cd; color: #664d03; }
+  .issue-info { background: #cff4fc; color: #055160; }
+  .issue .severity { font-weight: 700; font-size: .75rem; text-transform: uppercase; flex-shrink: 0; }
+  .report-pass-banner {
+    background: #d1e7dd; color: #0f5132; padding: .6rem .75rem; border-radius: 4px;
+    font-weight: 500; text-align: center;
+  }
+
   footer { text-align: center; color: var(--muted); font-size: .8rem; padding: 2rem 0 1rem; }
 </style>
 </head>
@@ -189,6 +217,13 @@
       <span class="stat">Images: <b id="stat-total">0</b></span>
       <span class="stat">Approved: <b id="stat-approved">0</b></span>
       <span class="stat">Needs review: <b id="stat-needs">0</b></span>
+    </div>
+
+    <!-- Accessibility report -->
+    <div class="report-panel" id="report-panel" style="display:none">
+      <h3>Accessibility Report (original PDF)</h3>
+      <div class="report-grid" id="report-grid"></div>
+      <div class="report-issues" id="report-issues"></div>
     </div>
 
     <!-- AI settings panel -->
@@ -348,6 +383,9 @@
     document.getElementById("result-filename").textContent = data.filename || "PDF";
     updateStats(data.stats);
 
+    // Render accessibility report
+    renderReport(data.analysis);
+
     // Show/hide AI panel based on whether there are images
     aiPanel.style.display = imageData.length > 0 ? "block" : "none";
 
@@ -355,6 +393,45 @@
 
     btnSave.disabled = imageData.length === 0;
     btnDownload.disabled = false;
+  }
+
+  function renderReport(analysis) {
+    const panel = document.getElementById("report-panel");
+    const grid = document.getElementById("report-grid");
+    const issuesDiv = document.getElementById("report-issues");
+
+    if (!analysis) { panel.style.display = "none"; return; }
+    panel.style.display = "block";
+
+    // Build the metrics grid
+    const yesNo = (val) => val
+      ? '<span class="value pass">Yes</span>'
+      : '<span class="value fail">No</span>';
+
+    grid.innerHTML = `
+      <span class="label">Pages</span><span class="value">${analysis.pages}</span>
+      <span class="label">Tagged</span>${yesNo(analysis.is_tagged)}
+      <span class="label">Language set</span>${yesNo(analysis.has_lang)}
+      <span class="label">Title</span><span class="value">${analysis.title ? escapeHtml(analysis.title) : '<span class="fail">Not set</span>'}</span>
+      <span class="label">Images</span><span class="value">${analysis.images}</span>
+      <span class="label">Errors</span><span class="value${analysis.errors > 0 ? ' fail' : ' pass'}">${analysis.errors}</span>
+      <span class="label">Warnings</span><span class="value${analysis.warnings > 0 ? '' : ' pass'}">${analysis.warnings}</span>
+    `;
+
+    // Build issues list
+    if (analysis.issues && analysis.issues.length > 0) {
+      const icons = { error: "X", warning: "!", info: "i" };
+      issuesDiv.innerHTML = analysis.issues.map(issue => {
+        const cls = "issue-" + issue.severity;
+        const icon = icons[issue.severity] || "?";
+        return `<div class="issue ${cls}">
+          <span class="severity">${icon}</span>
+          <span>${escapeHtml(issue.message)}</span>
+        </div>`;
+      }).join("");
+    } else {
+      issuesDiv.innerHTML = '<div class="report-pass-banner">No accessibility issues found. Structural fixes have been applied.</div>';
+    }
   }
 
   function renderImageCards() {

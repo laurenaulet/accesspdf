@@ -24,7 +24,7 @@ class _Job:
     """Represents a single upload + processing session."""
 
     __slots__ = ("job_id", "work_dir", "input_path", "output_path", "sidecar",
-                 "sidecar_path", "created_at", "error")
+                 "sidecar_path", "created_at", "error", "analysis")
 
     def __init__(self, job_id: str, work_dir: Path) -> None:
         self.job_id = job_id
@@ -35,6 +35,7 @@ class _Job:
         self.sidecar_path: Path | None = None
         self.created_at = time.time()
         self.error: str | None = None
+        self.analysis: dict | None = None
 
 
 _jobs: dict[str, _Job] = {}
@@ -89,6 +90,32 @@ def create_app() -> FastAPI:
         contents = await file.read()
         input_path.write_bytes(contents)
         job.input_path = input_path
+
+        # Analyze the original PDF first
+        try:
+            from accesspdf.analyzer import PDFAnalyzer
+
+            analyzer = PDFAnalyzer()
+            result = analyzer.analyze(input_path)
+            job.analysis = {
+                "pages": result.page_count,
+                "is_tagged": result.is_tagged,
+                "has_lang": result.has_lang,
+                "title": result.title or "",
+                "images": len(result.images),
+                "errors": result.error_count,
+                "warnings": result.warning_count,
+                "issues": [
+                    {
+                        "rule": issue.rule,
+                        "severity": issue.severity.value,
+                        "message": issue.message,
+                    }
+                    for issue in result.issues
+                ],
+            }
+        except Exception:
+            pass  # analysis is optional, don't block upload
 
         # Run pipeline
         output_path = work_dir / f"{input_path.stem}_accessible.pdf"
@@ -301,4 +328,5 @@ def _job_status_dict(job: _Job) -> dict:
         "error": job.error,
         "images": images,
         "stats": job.sidecar.stats if job.sidecar else None,
+        "analysis": job.analysis,
     }
