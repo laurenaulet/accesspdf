@@ -250,7 +250,124 @@ def serve(
     uvicorn.run(web_app, host=host, port=port, log_level="warning")
 
 
+@app.command(name="generate-alt-text")
+def generate_alt_text(
+    pdf: Path = typer.Argument(..., help="Path to a fixed PDF (with sidecar) to generate alt text for."),
+    provider: str = typer.Option("ollama", "--provider", "-p", help="AI provider to use."),
+    model: Optional[str] = typer.Option(None, "--model", "-m", help="Model override."),  # noqa: UP007
+    api_key: Optional[str] = typer.Option(None, "--api-key", help="API key (or set env var)."),  # noqa: UP007
+) -> None:
+    """Generate AI alt text drafts for images in a PDF."""
+    import asyncio
+
+    if not pdf.is_file():
+        console.print(f"[red]File not found:[/red] {pdf}")
+        raise typer.Exit(code=1)
+
+    from accesspdf.alttext.sidecar import SidecarManager
+
+    sidecar, sidecar_path = SidecarManager.load_or_create(pdf)
+
+    if not sidecar.images:
+        # Try to populate sidecar from the PDF's images
+        from accesspdf.analyzer import PDFAnalyzer
+
+        analysis = PDFAnalyzer().analyze(pdf)
+        if not analysis.images:
+            console.print("[dim]No images found in this PDF.[/dim]")
+            raise typer.Exit()
+
+        for image in analysis.images:
+            sidecar.upsert(image)
+        SidecarManager.save(sidecar, sidecar_path)
+
+    # Filter to images that need AI drafts
+    from accesspdf.models import AltTextStatus
+
+    pending = [e for e in sidecar.images if not e.ai_draft and e.status == AltTextStatus.NEEDS_REVIEW]
+    if not pending:
+        console.print("[dim]All images already have AI drafts or are approved.[/dim]")
+        raise typer.Exit()
+
+    # Create provider
+    from accesspdf.providers import get_provider
+
+    kwargs: dict = {}
+    if model:
+        kwargs["model"] = model
+    try:
+        prov = get_provider(provider, api_key=api_key, **kwargs)
+    except (ValueError, ImportError) as exc:
+        console.print(f"[red]Provider error:[/red] {exc}")
+        raise typer.Exit(code=1)
+
+    console.print(f"[dim]Provider:[/dim] {prov.name}")
+    console.print(f"[dim]Generating drafts for {len(pending)} image(s)...[/dim]")
+
+    # Generate
+    from accesspdf.alttext.extract import extract_image
+    from accesspdf.providers.base import ImageContext
+    from rich.progress import Progress
+
+    async def _generate_all() -> int:
+        count = 0
+        with Progress(console=console) as progress:
+            task = progress.add_task("Generating...", total=len(pending))
+            for entry in pending:
+                img = extract_image(pdf, entry.hash)
+                if img is None:
+                    progress.advance(task)
+                    continue
+
+                import io
+                buf = io.BytesIO()
+                img.save(buf, format="PNG")
+                context = ImageContext(
+                    image_bytes=buf.getvalue(),
+                    page=entry.page,
+                    caption=entry.caption,
+                    document_title=sidecar.document,
+                )
+
+                result = await prov.generate(context)
+                if result.alt_text:
+                    entry.ai_draft = result.alt_text
+                    count += 1
+                elif result.error:
+                    console.print(f"  [yellow]![/yellow] {entry.id}: {result.error}")
+
+                progress.advance(task)
+        return count
+
+    generated = asyncio.run(_generate_all())
+    SidecarManager.save(sidecar, sidecar_path)
+
+    console.print(f"[green]OK[/green] Generated {generated} draft(s). Sidecar saved to {sidecar_path.name}")
+    console.print("[dim]Run 'accesspdf review' to approve or edit the drafts.[/dim]")
+
+
 @app.command()
 def providers() -> None:
     """Show available AI providers and their status."""
-    console.print("[dim]Provider availability check not yet implemented.[/dim]")
+    from accesspdf.providers import list_available
+
+    results = list_available()
+
+    table = Table(title="AI Providers")
+    table.add_column("Provider", style="bold")
+    table.add_column("Available")
+    table.add_column("Notes")
+
+    notes_map = {
+        "ollama": "Local — no API key needed",
+        "anthropic": "Needs ANTHROPIC_API_KEY env var",
+        "openai": "Needs OPENAI_API_KEY env var",
+        "gemini": "Needs GOOGLE_API_KEY env var",
+        "noop": "No-op — flags for manual review",
+    }
+
+    for name, available in results:
+        status = "[green]Yes[/green]" if available else "[red]No[/red]"
+        table.add_row(name, status, notes_map.get(name, ""))
+
+    console.print(table)

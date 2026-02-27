@@ -146,3 +146,51 @@ class TestWebUI:
         dl_resp = client.get(f"/api/job/{job_id}/download")
         assert dl_resp.status_code == 200
         assert len(dl_resp.content) > 0
+
+    def test_providers_endpoint(self, client: TestClient) -> None:
+        resp = client.get("/api/providers")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "providers" in data
+        names = [p["name"] for p in data["providers"]]
+        assert "ollama" in names
+        assert "noop" in names
+
+    def test_generate_with_noop(self, client: TestClient, images_pdf: Path) -> None:
+        """Generate endpoint with noop provider returns 0 drafts (expected)."""
+        with open(images_pdf, "rb") as f:
+            resp = client.post(
+                "/api/upload",
+                files={"file": (images_pdf.name, f, "application/pdf")},
+            )
+        data = resp.json()
+        job_id = data["job_id"]
+
+        gen_resp = client.post(
+            f"/api/job/{job_id}/generate",
+            json={"provider": "noop"},
+        )
+        assert gen_resp.status_code == 200
+        gen_data = gen_resp.json()
+        assert gen_data["generated"] == 0  # noop returns empty alt_text
+        assert "images" in gen_data
+
+    def test_generate_bad_provider(self, client: TestClient, images_pdf: Path) -> None:
+        with open(images_pdf, "rb") as f:
+            resp = client.post(
+                "/api/upload",
+                files={"file": (images_pdf.name, f, "application/pdf")},
+            )
+        job_id = resp.json()["job_id"]
+
+        gen_resp = client.post(
+            f"/api/job/{job_id}/generate",
+            json={"provider": "nonexistent"},
+        )
+        assert gen_resp.status_code == 400
+
+    def test_frontend_has_ai_toggle(self, client: TestClient) -> None:
+        resp = client.get("/")
+        assert "ai-toggle" in resp.text
+        assert "provider-select" in resp.text
+        assert "api-key-input" in resp.text
