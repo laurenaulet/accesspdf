@@ -101,17 +101,26 @@ accesspdf serve
 
 This opens a browser window at `http://localhost:8080`. Upload your fixed PDF, see all the images laid out, and type descriptions right in the browser. When you're done, download the final PDF.
 
+The web UI also has an "AI generate" button -- for that to work, you need Ollama installed (see Option C below) or a cloud API key pasted into the settings panel.
+
 **Option C: AI-assisted (fastest)**
 
-Have AI draft descriptions, then you review and approve them:
+Have AI draft descriptions, then you review and approve them. This uses **Ollama** by default -- a free, local AI runner. You need to install it first:
+
+1. Download and install from [ollama.com](https://ollama.com)
+2. Pull the vision model: `ollama pull llava`
+
+Then generate drafts:
 
 ```bash
-# Generate drafts (uses Ollama by default -- free, runs locally)
+# Generate drafts (uses Ollama locally -- free, no API key)
 accesspdf generate-alt-text my-document_accessible.pdf
 
 # Then review and approve/edit the drafts
 accesspdf review my-document_accessible.pdf
 ```
+
+If you'd rather use a cloud provider (Claude, GPT-4, Gemini) instead, see [AI providers](#ai-providers-for-alt-text) below.
 
 AI drafts are **never** injected automatically. They show up as suggestions that you approve, edit, or reject.
 
