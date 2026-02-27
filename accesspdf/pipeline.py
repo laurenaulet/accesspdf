@@ -58,7 +58,10 @@ def run_pipeline(
 
         pdf.save(output_path)
 
-    # Step 3: Alt text injection (if sidecar provided)
+    # Step 3: Create/update sidecar with detected images
+    _create_sidecar(output_path)
+
+    # Step 4: Alt text injection (if sidecar provided)
     if alt_text_sidecar is not None:
         _inject_alt_text(output_path, alt_text_sidecar, result)
 
@@ -76,6 +79,26 @@ def _run_single_processor(proc: Processor, pdf: pikepdf.Pdf) -> ProcessorResult:
             success=False,
             error=str(exc),
         )
+
+
+def _create_sidecar(output_path: Path) -> None:
+    """Analyze the output PDF for images and create/update the sidecar file."""
+    try:
+        from accesspdf.analyzer import PDFAnalyzer
+        from accesspdf.alttext.sidecar import SidecarManager
+
+        analysis = PDFAnalyzer().analyze(output_path)
+        if not analysis.images:
+            return
+
+        sidecar, sidecar_path = SidecarManager.load_or_create(output_path)
+        for image in analysis.images:
+            sidecar.upsert(image)
+
+        SidecarManager.save(sidecar, sidecar_path)
+        logger.info("Sidecar written to %s (%d images)", sidecar_path, len(sidecar.images))
+    except Exception:
+        logger.warning("Sidecar creation failed", exc_info=True)
 
 
 def _inject_alt_text(
