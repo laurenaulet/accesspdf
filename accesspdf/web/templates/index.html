@@ -206,15 +206,17 @@
         <div class="field">
           <label for="provider-select">Provider</label>
           <select id="provider-select">
-            <option value="ollama" selected>Ollama (local, free)</option>
+            <option value="gemini" selected>Google Gemini (free)</option>
+            <option value="ollama">Ollama (local)</option>
             <option value="anthropic">Anthropic (Claude)</option>
             <option value="openai">OpenAI (GPT-4)</option>
-            <option value="gemini">Google (Gemini)</option>
           </select>
         </div>
-        <div class="field" id="api-key-field">
+        <div class="field visible" id="api-key-field">
           <label for="api-key-input">API key</label>
           <input type="password" id="api-key-input" placeholder="Paste your API key here" style="width:260px">
+          <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener"
+             style="font-size:.75rem;color:var(--accent);margin-top:2px">Get a free Gemini key</a>
         </div>
         <button class="btn btn-primary" id="btn-generate">Generate all</button>
       </div>
@@ -264,8 +266,20 @@
   });
 
   providerSelect.addEventListener("change", () => {
-    const needsKey = providerSelect.value !== "ollama";
-    apiKeyField.classList.toggle("visible", needsKey);
+    const isOllama = providerSelect.value === "ollama";
+    apiKeyField.classList.toggle("visible", !isOllama);
+    // Update the "get key" link based on provider
+    const keyLink = apiKeyField.querySelector("a");
+    if (keyLink) {
+      const links = {
+        gemini: { href: "https://aistudio.google.com/apikey", text: "Get a free Gemini key" },
+        anthropic: { href: "https://console.anthropic.com/settings/keys", text: "Get an Anthropic key" },
+        openai: { href: "https://platform.openai.com/api-keys", text: "Get an OpenAI key" },
+      };
+      const info = links[providerSelect.value];
+      if (info) { keyLink.href = info.href; keyLink.textContent = info.text; keyLink.style.display = ""; }
+      else { keyLink.style.display = "none"; }
+    }
   });
 
   // --- Upload handling ---
