@@ -51,6 +51,10 @@ class OpenAIProvider:
                 user_text += f'\n\nThe image has a caption: "{context.caption}"'
             if context.surrounding_text:
                 user_text += f'\n\nSurrounding text: "{context.surrounding_text}"'
+            if context.document_context:
+                user_text += f'\n\nDocument context: "{context.document_context}"'
+            if context.document_title:
+                user_text += f'\n\nDocument title: "{context.document_title}"'
 
             response = await client.chat.completions.create(
                 model=self._model,

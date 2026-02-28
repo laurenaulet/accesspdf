@@ -16,6 +16,7 @@ class ImageContext:
     surrounding_text: str = ""
     page: int = 0
     document_title: str = ""
+    document_context: str = ""
 
 
 @dataclass

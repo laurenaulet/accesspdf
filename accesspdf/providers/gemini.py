@@ -100,6 +100,10 @@ class GeminiProvider:
             prompt += f'\n\nThe image has a caption: "{context.caption}"'
         if context.surrounding_text:
             prompt += f'\n\nSurrounding text: "{context.surrounding_text}"'
+        if context.document_context:
+            prompt += f'\n\nDocument context: "{context.document_context}"'
+        if context.document_title:
+            prompt += f'\n\nDocument title: "{context.document_title}"'
 
         payload = {
             "contents": [

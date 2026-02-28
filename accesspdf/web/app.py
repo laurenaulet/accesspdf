@@ -142,7 +142,8 @@ def _process_job(job: _Job) -> None:
 _CONCURRENT_REQUESTS = 1  # Sequential — provider throttle handles pacing
 
 
-def _generate_alt_text(job: _Job, provider: object, pending_entries: list) -> None:
+def _generate_alt_text(job: _Job, provider: object, pending_entries: list,
+                       document_context: str = "") -> None:
     """Generate AI alt text in a background thread using concurrent requests."""
     import asyncio
 
@@ -171,7 +172,9 @@ def _generate_alt_text(job: _Job, provider: object, pending_entries: list) -> No
                     image_bytes=prepare_for_ai(img),
                     page=entry.page,
                     caption=entry.caption,
+                    surrounding_text=entry.context,
                     document_title=job.sidecar.document,
+                    document_context=document_context,
                 )
 
                 async with sem:
@@ -342,6 +345,8 @@ def create_app() -> FastAPI:
                 continue
             if "alt_text" in update:
                 entry.alt_text = update["alt_text"]
+            if "context" in update:
+                entry.context = update["context"]
             if "status" in update:
                 entry.status = AltTextStatus(update["status"])
 
@@ -439,8 +444,11 @@ def create_app() -> FastAPI:
         job.gen_current = 0
         job.gen_errors = []
 
+        document_context = request.get("document_context", "")
+
         thread = threading.Thread(
-            target=_generate_alt_text, args=(job, provider, pending), daemon=True,
+            target=_generate_alt_text, args=(job, provider, pending, document_context),
+            daemon=True,
         )
         thread.start()
 
@@ -563,6 +571,7 @@ def _job_status_dict(job: _Job) -> dict:
                 "page": entry.page,
                 "alt_text": entry.alt_text,
                 "ai_draft": entry.ai_draft,
+                "context": entry.context,
                 "status": entry.status.value,
             })
 

@@ -291,6 +291,7 @@ def generate_alt_text(
     provider: str = typer.Option("ollama", "--provider", "-p", help="AI provider to use."),
     model: Optional[str] = typer.Option(None, "--model", "-m", help="Model override."),  # noqa: UP007
     api_key: Optional[str] = typer.Option(None, "--api-key", help="API key (or set env var)."),  # noqa: UP007
+    doc_context: Optional[str] = typer.Option(None, "--context", "-c", help="Document context to improve AI accuracy (e.g., 'chemistry textbook')."),  # noqa: UP007
 ) -> None:
     """Generate AI alt text drafts for images in a PDF."""
     import asyncio
@@ -373,7 +374,9 @@ def generate_alt_text(
                         image_bytes=prepare_for_ai(img),
                         page=entry.page,
                         caption=entry.caption,
+                        surrounding_text=entry.context,
                         document_title=sidecar.document,
+                        document_context=doc_context or "",
                     )
 
                     async with sem:

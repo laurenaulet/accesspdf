@@ -10,6 +10,7 @@ import pikepdf
 
 from accesspdf.alttext.sidecar import SidecarFile
 from accesspdf.models import AltTextStatus
+from accesspdf.processors._pdf_helpers import add_kid, make_struct_elem
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +19,8 @@ def inject_alt_text(pdf_path: Path, sidecar: SidecarFile) -> int:
     """Inject approved/decorative alt text entries into the PDF at *pdf_path*.
 
     For each actionable sidecar entry, finds the matching image XObject by hash
-    and creates a /Figure structure element with /Alt text in the tag tree.
+    and creates a /Figure structure element with /Alt text in the tag tree,
+    properly linked to the image via marked content (BDC/EMC + MCID).
 
     Returns the number of entries injected.
     """
@@ -30,7 +32,7 @@ def inject_alt_text(pdf_path: Path, sidecar: SidecarFile) -> int:
     count = 0
     with pikepdf.open(pdf_path, allow_overwriting_input=True) as pdf:
         if "/StructTreeRoot" not in pdf.Root:
-            logger.warning("PDF has no structure tree — cannot inject alt text.")
+            logger.warning("PDF has no structure tree -- cannot inject alt text.")
             return 0
 
         # Build lookup: hash -> (alt_text, is_decorative)
@@ -39,11 +41,11 @@ def inject_alt_text(pdf_path: Path, sidecar: SidecarFile) -> int:
             is_deco = entry.status == AltTextStatus.DECORATIVE
             entry_lookup[entry.hash] = (entry.alt_text, is_deco)
 
-        # First pass: try to update existing /Figure tags
+        # First pass: update existing /Figure tags (e.g. from PowerPoint exports)
         struct_root = pdf.Root["/StructTreeRoot"]
         count += _update_existing_figures(struct_root, entry_lookup, pdf)
 
-        # Second pass: create /Figure tags for remaining unmatched entries
+        # Second pass: create new /Figure tags with marked content for remaining
         if entry_lookup:
             count += _create_figure_tags(pdf, entry_lookup)
 
@@ -58,16 +60,22 @@ def _update_existing_figures(
     entry_lookup: dict[str, tuple[str, bool]],
     pdf: pikepdf.Pdf,
 ) -> int:
-    """Walk the structure tree updating any existing /Figure tags."""
+    """Walk the structure tree updating any existing /Figure tags with /Alt."""
     count = 0
     try:
         if "/S" in node and str(node["/S"]) == "/Figure":
             if "/Alt" not in node or not str(node["/Alt"]).strip():
-                # Try to match this Figure to an image via page
                 page_idx = _get_page_index(node, pdf)
                 if page_idx is not None:
-                    matched = _match_page_image(pdf, page_idx, entry_lookup)
-                    if matched:
+                    img_hash = _match_page_image(pdf, page_idx, entry_lookup)
+                    if img_hash is not None:
+                        alt_text, is_deco = entry_lookup[img_hash]
+                        if is_deco:
+                            node[pikepdf.Name("/Alt")] = pikepdf.String("")
+                            node[pikepdf.Name("/ActualText")] = pikepdf.String("")
+                        else:
+                            node[pikepdf.Name("/Alt")] = pikepdf.String(alt_text)
+                        del entry_lookup[img_hash]
                         count += 1
 
         if "/K" in node:
@@ -87,7 +95,7 @@ def _create_figure_tags(
     pdf: pikepdf.Pdf,
     entry_lookup: dict[str, tuple[str, bool]],
 ) -> int:
-    """Create /Figure structure elements for images that have approved alt text."""
+    """Create /Figure elements linked to images via BDC/EMC marked content."""
     count = 0
     struct_root = pdf.Root["/StructTreeRoot"]
 
@@ -99,7 +107,6 @@ def _create_figure_tags(
             doc_elem = kids[0]
         elif isinstance(kids, pikepdf.Dictionary):
             doc_elem = kids
-
     if doc_elem is None:
         doc_elem = struct_root
 
@@ -107,44 +114,110 @@ def _create_figure_tags(
         if not entry_lookup:
             break
 
-        page_hashes = _get_page_image_hashes(page)
-        for img_hash in page_hashes:
-            if img_hash not in entry_lookup:
-                continue
+        page_obj = page.obj if hasattr(page, "obj") else page
 
-            alt_text, is_decorative = entry_lookup[img_hash]
+        # Build XObject name -> hash mapping for this page
+        name_hash_map = _get_page_image_name_hashes(page)
+        if not name_hash_map:
+            continue
 
-            # Create /Figure structure element
-            page_obj = page.obj if hasattr(page, "obj") else page
-            figure_dict: dict[str, pikepdf.Object] = {
-                "/Type": pikepdf.Name("/StructElem"),
-                "/S": pikepdf.Name("/Figure"),
-                "/P": doc_elem,
-                "/Pg": page_obj,
-            }
+        # Find which images on this page need tagging
+        to_tag: list[tuple[str, str]] = []
+        for xobj_name, img_hash in name_hash_map.items():
+            if img_hash in entry_lookup:
+                to_tag.append((xobj_name, img_hash))
+        if not to_tag:
+            continue
 
-            if is_decorative:
-                figure_dict["/Alt"] = pikepdf.String("")
-                figure_dict["/ActualText"] = pikepdf.String("")
-            else:
-                figure_dict["/Alt"] = pikepdf.String(alt_text)
+        # Find the next available MCID on this page
+        mcid = _get_next_mcid(page)
 
-            figure_elem = pdf.make_indirect(pikepdf.Dictionary(figure_dict))
+        # Parse content stream
+        try:
+            ops = pikepdf.parse_content_stream(page)
+        except Exception:
+            logger.debug("Could not parse content stream for page %d", page_idx)
+            continue
 
-            # Add to document's /K array
-            if "/K" not in doc_elem:
-                doc_elem[pikepdf.Name("/K")] = pikepdf.Array([figure_elem])
-            else:
-                kids = doc_elem["/K"]
-                if isinstance(kids, pikepdf.Array):
-                    kids.append(figure_elem)
+        # Wrap matching Do commands with BDC/EMC marked content
+        new_ops: list[tuple[list, pikepdf.Operator]] = []
+        tagged_names: set[str] = set()
+
+        for operands, operator in ops:
+            if operator == pikepdf.Operator("Do") and len(operands) == 1:
+                do_name = str(operands[0])
+                matched = None
+                for xobj_name, img_hash in to_tag:
+                    if do_name == f"/{xobj_name}" or do_name == xobj_name:
+                        if xobj_name not in tagged_names:
+                            matched = (xobj_name, img_hash)
+                            break
+
+                if matched:
+                    xobj_name, img_hash = matched
+                    alt_text, is_deco = entry_lookup[img_hash]
+
+                    # BDC ... Do ... EMC
+                    new_ops.append((
+                        [pikepdf.Name("/Figure"),
+                         pikepdf.Dictionary({"/MCID": mcid})],
+                        pikepdf.Operator("BDC"),
+                    ))
+                    new_ops.append((operands, operator))
+                    new_ops.append(([], pikepdf.Operator("EMC")))
+
+                    # Create /Figure structure element linked via MCID
+                    figure = make_struct_elem(
+                        pdf, "Figure", doc_elem,
+                        page=page_obj, mcid=mcid,
+                        alt="" if is_deco else alt_text,
+                    )
+                    if is_deco:
+                        figure[pikepdf.Name("/ActualText")] = pikepdf.String("")
+                    add_kid(doc_elem, figure)
+
+                    tagged_names.add(xobj_name)
+                    del entry_lookup[img_hash]
+                    count += 1
+                    mcid += 1
                 else:
-                    doc_elem[pikepdf.Name("/K")] = pikepdf.Array([kids, figure_elem])
+                    new_ops.append((operands, operator))
+            else:
+                new_ops.append((operands, operator))
 
-            del entry_lookup[img_hash]
-            count += 1
+        # Replace content stream if we tagged any images
+        if tagged_names:
+            try:
+                new_content = pikepdf.unparse_content_stream(new_ops)
+                page["/Contents"] = pdf.make_stream(new_content)
+            except Exception:
+                logger.debug("Could not rewrite content stream for page %d", page_idx)
+
+    # Rebuild parent tree to include the new Figure elements
+    _rebuild_parent_tree(pdf)
 
     return count
+
+
+# ── Helpers ──────────────────────────────────────────────────────────────────
+
+
+def _get_page_image_name_hashes(page: pikepdf.Page) -> dict[str, str]:
+    """Get XObject name -> md5 hash mapping for image XObjects on a page."""
+    result: dict[str, str] = {}
+    if "/Resources" not in page or "/XObject" not in page["/Resources"]:
+        return result
+    for name, xobj_ref in page["/Resources"]["/XObject"].items():
+        try:
+            xobj = xobj_ref.resolve() if hasattr(xobj_ref, "resolve") else xobj_ref
+            if not isinstance(xobj, pikepdf.Stream):
+                continue
+            if str(xobj.get("/Subtype", "")) == "/Image":
+                raw = bytes(xobj.read_raw_bytes())
+                result[name] = hashlib.md5(raw).hexdigest()
+        except Exception:
+            pass
+    return result
 
 
 def _get_page_image_hashes(page: pikepdf.Page) -> list[str]:
@@ -152,7 +225,6 @@ def _get_page_image_hashes(page: pikepdf.Page) -> list[str]:
     hashes: list[str] = []
     if "/Resources" not in page or "/XObject" not in page["/Resources"]:
         return hashes
-
     for _name, xobj_ref in page["/Resources"]["/XObject"].items():
         try:
             xobj = xobj_ref.resolve() if hasattr(xobj_ref, "resolve") else xobj_ref
@@ -186,22 +258,117 @@ def _collect_form_image_hashes(form_xobj: pikepdf.Stream, hashes: list[str]) -> 
         pass
 
 
+def _get_next_mcid(page: pikepdf.Object) -> int:
+    """Find the next available MCID on a page by scanning the content stream."""
+    max_mcid = -1
+    try:
+        ops = pikepdf.parse_content_stream(page)
+        for operands, operator in ops:
+            if operator == pikepdf.Operator("BDC") and len(operands) >= 2:
+                props = operands[1]
+                if isinstance(props, pikepdf.Dictionary) and "/MCID" in props:
+                    mcid_val = int(props["/MCID"])
+                    if mcid_val > max_mcid:
+                        max_mcid = mcid_val
+    except Exception:
+        pass
+    return max_mcid + 1
+
+
+def _rebuild_parent_tree(pdf: pikepdf.Pdf) -> None:
+    """Rebuild the ParentTree to include all structure elements."""
+    struct_root = pdf.Root["/StructTreeRoot"]
+
+    doc_elem = None
+    if "/K" in struct_root:
+        kids = struct_root["/K"]
+        if isinstance(kids, pikepdf.Array) and len(kids) > 0:
+            doc_elem = kids[0]
+        elif isinstance(kids, pikepdf.Dictionary):
+            doc_elem = kids
+    if doc_elem is None:
+        return
+
+    if "/K" not in doc_elem:
+        return
+
+    kids = doc_elem["/K"]
+    if not isinstance(kids, pikepdf.Array):
+        kids = pikepdf.Array([kids])
+
+    # Group struct elements by page index -> list of (mcid, elem)
+    page_map: dict[int, list[tuple[int, pikepdf.Object]]] = {}
+
+    for kid in kids:
+        if not isinstance(kid, pikepdf.Dictionary):
+            continue
+        if "/Pg" not in kid or "/K" not in kid:
+            continue
+
+        k_val = kid["/K"]
+        mcids: list[int] = []
+        if isinstance(k_val, pikepdf.Array):
+            for item in k_val:
+                try:
+                    mcids.append(int(item))
+                except (TypeError, ValueError):
+                    pass
+        else:
+            try:
+                mcids.append(int(k_val))
+            except (TypeError, ValueError):
+                pass
+
+        if not mcids:
+            continue
+
+        page_ref = kid["/Pg"]
+        for idx, pg in enumerate(pdf.pages):
+            pg_obj = pg.obj if hasattr(pg, "obj") else pg
+            try:
+                if pg_obj.objgen == page_ref.objgen:
+                    if idx not in page_map:
+                        page_map[idx] = []
+                    for m in mcids:
+                        page_map[idx].append((m, kid))
+                    break
+            except Exception:
+                pass
+
+    parent_tree = struct_root.get("/ParentTree")
+    if parent_tree is None:
+        parent_tree = pdf.make_indirect(pikepdf.Dictionary({
+            "/Nums": pikepdf.Array(),
+        }))
+        struct_root["/ParentTree"] = parent_tree
+
+    nums = pikepdf.Array()
+    for page_idx in sorted(page_map.keys()):
+        entries = page_map[page_idx]
+        max_mcid = max(m for m, _ in entries)
+        arr: list = [None] * (max_mcid + 1)
+        for m, elem in entries:
+            arr[m] = elem
+        nums.append(page_idx)
+        nums.append(pdf.make_indirect(pikepdf.Array(arr)))
+
+    parent_tree["/Nums"] = nums
+
+
 def _match_page_image(
     pdf: pikepdf.Pdf,
     page_idx: int,
     entry_lookup: dict[str, tuple[str, bool]],
-) -> bool:
-    """Try to match an image on a page to an entry in the lookup."""
+) -> str | None:
+    """Try to match an image on a page to an entry. Returns the hash or None."""
     if page_idx >= len(pdf.pages):
-        return False
-
+        return None
     page = pdf.pages[page_idx]
     hashes = _get_page_image_hashes(page)
     for img_hash in hashes:
         if img_hash in entry_lookup:
-            # Found a match — this function doesn't inject, it just confirms
-            return True
-    return False
+            return img_hash
+    return None
 
 
 def _get_page_index(node: pikepdf.Object, pdf: pikepdf.Pdf) -> int | None:

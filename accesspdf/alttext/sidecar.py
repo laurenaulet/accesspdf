@@ -27,6 +27,7 @@ class AltTextEntry(BaseModel):
     page: int
     hash: str  # full md5 hex digest
     caption: str = ""
+    context: str = ""
     ai_draft: str = ""
     alt_text: str = ""
     status: AltTextStatus = AltTextStatus.NEEDS_REVIEW

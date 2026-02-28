@@ -402,6 +402,15 @@
           <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener"
              style="font-size:.75rem;color:var(--accent);margin-top:2px">Get a free Gemini key</a>
         </div>
+        <div class="field">
+          <label for="doc-context-input">Document context (optional)</label>
+          <input type="text" id="doc-context-input"
+                 placeholder="e.g., This is a chemistry textbook about organic reactions"
+                 style="width:100%">
+          <div style="font-size:.75rem;color:var(--muted);margin-top:2px">
+            Helps the AI understand what your document is about, improving alt text accuracy.
+          </div>
+        </div>
         <button class="btn btn-primary" id="btn-generate">Generate all</button>
       </div>
     </div>
@@ -464,6 +473,8 @@
     modeLabel.style.color = on ? "var(--muted)" : "var(--text)";
     document.getElementById("ai-label-right").style.color = on ? "var(--accent)" : "var(--muted)";
   });
+
+  const docContextInput = document.getElementById("doc-context-input");
 
   const ollamaHint = document.getElementById("ollama-hint");
   const ollamaModelField = document.getElementById("ollama-model-field");
@@ -781,6 +792,13 @@
       </div>
       <img class="image-preview" src="/api/job/${currentJobId}/image/${img.image_hash}"
            alt="Image from page ${img.page}" loading="lazy">
+      <div class="context-hint-field" style="padding:0 1rem">
+        <label for="ctx-${idx}" style="font-size:.75rem;color:var(--muted)">Context hint (optional)</label>
+        <input type="text" id="ctx-${idx}" class="context-hint"
+               placeholder="e.g., Diagram of a benzene ring"
+               value="${escapeHtml(img.context || "")}"
+               style="width:100%;font-size:.85rem;padding:4px 8px;border:1px solid var(--border);border-radius:4px">
+      </div>
       <div class="ai-draft-box ${draftVisible}" data-idx="${idx}">
         <div class="draft-label">AI suggestion</div>
         <div class="draft-text">${escapeHtml(img.ai_draft || "")}</div>
@@ -814,6 +832,8 @@
     const key = apiKeyInput.value.trim();
     if (key) payload.api_key = key;
     if (providerSelect.value === "ollama") payload.model = ollamaModelSelect.value;
+    const docCtx = docContextInput.value.trim();
+    if (docCtx) payload.document_context = docCtx;
 
     try {
       const resp = await fetch(`/api/job/${currentJobId}/generate`, {
@@ -964,10 +984,12 @@
       status: img.status,
     }));
 
-    // Sync textarea values
+    // Sync textarea values and context hints
     document.querySelectorAll(".image-card").forEach((card, idx) => {
       const ta = card.querySelector("textarea");
       if (ta) updates[idx].alt_text = ta.value;
+      const ctx = card.querySelector(".context-hint");
+      if (ctx) updates[idx].context = ctx.value;
     });
 
     try {
