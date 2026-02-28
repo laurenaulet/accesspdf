@@ -32,6 +32,7 @@ def generate_all() -> dict[str, Path]:
         "images": generate_images_pdf(CORPUS_DIR),
         "low_contrast": generate_low_contrast_pdf(CORPUS_DIR),
         "ambiguous_links": generate_ambiguous_links_pdf(CORPUS_DIR),
+        "scanned": generate_scanned_pdf(CORPUS_DIR),
     }
 
 
@@ -304,6 +305,46 @@ def generate_ambiguous_links_pdf(output_dir: Path) -> Path:
         ),
     ]
     doc.build(story)
+    return path
+
+
+def generate_scanned_pdf(output_dir: Path) -> Path:
+    """PDF that simulates a scanned document -- pages are just full-page images with no text."""
+    from PIL import Image as PILImage, ImageDraw
+
+    path = output_dir / "scanned.pdf"
+
+    from reportlab.lib.pagesizes import letter
+    from reportlab.pdfgen import canvas
+
+    # Create a couple of synthetic "scan" images (like photographed pages)
+    import tempfile
+
+    temp_dir = Path(tempfile.mkdtemp())
+    img_paths = []
+    for i in range(3):
+        img = PILImage.new("RGB", (612, 792), color=(250, 248, 245))
+        draw = ImageDraw.Draw(img)
+        # Draw some "text-like" lines to mimic a scanned page
+        y = 72
+        for _ in range(20):
+            draw.rectangle([72, y, 540, y + 8], fill=(40, 40, 40))
+            y += 24
+        img_path = temp_dir / f"page_{i}.png"
+        img.save(str(img_path))
+        img_paths.append(str(img_path))
+
+    c = canvas.Canvas(str(path), pagesize=letter)
+    w, h = letter
+    for img_file in img_paths:
+        c.drawImage(img_file, 0, 0, width=w, height=h)
+        c.showPage()
+    c.save()
+
+    # Clean up temp images
+    import shutil
+    shutil.rmtree(temp_dir, ignore_errors=True)
+
     return path
 
 

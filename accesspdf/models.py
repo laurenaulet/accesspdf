@@ -73,6 +73,7 @@ class AnalysisResult:
     has_lang: bool = False
     detected_lang: str = ""
     title: str = ""
+    is_scanned: bool = False
     images: list[ImageInfo] = field(default_factory=list)
     tags: list[TagInfo] = field(default_factory=list)
     issues: list[AccessibilityIssue] = field(default_factory=list)

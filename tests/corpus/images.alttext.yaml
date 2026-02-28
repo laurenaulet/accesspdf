@@ -1,0 +1,24 @@
+document: images.pdf
+generated: '2026-02-27T16:03:41.226121Z'
+images:
+- id: img_37044c
+  page: 1
+  hash: 37044c64001bee1d5ade98da9c1de419
+  caption: ''
+  ai_draft: ''
+  alt_text: ''
+  status: needs_review
+- id: img_2571a6
+  page: 1
+  hash: 2571a625c58ff36fc9ed6332ca979943
+  caption: ''
+  ai_draft: ''
+  alt_text: ''
+  status: needs_review
+- id: img_8527c6
+  page: 1
+  hash: 8527c67235abd6fa37d6dba179b12ad7
+  caption: ''
+  ai_draft: ''
+  alt_text: ''
+  status: needs_review

@@ -56,7 +56,8 @@ class OllamaProvider:
                 "options": {"num_predict": self._max_tokens},
             }
 
-            async with httpx.AsyncClient(timeout=120.0) as client:
+            # First image can take a long time (model loads CLIP weights)
+            async with httpx.AsyncClient(timeout=300.0) as client:
                 resp = await client.post(f"{self._base_url}/api/generate", json=payload)
                 resp.raise_for_status()
                 data = resp.json()

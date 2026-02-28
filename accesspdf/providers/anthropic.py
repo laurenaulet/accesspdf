@@ -40,7 +40,12 @@ class AnthropicProvider:
     async def generate(self, context: ImageContext) -> AltTextResult:
         try:
             import anthropic
+        except ImportError:
+            return AltTextResult(
+                error="Anthropic SDK not installed. Run: pip install anthropic"
+            )
 
+        try:
             client = anthropic.AsyncAnthropic(api_key=self._api_key)
 
             img_b64 = base64.b64encode(context.image_bytes).decode()

@@ -63,6 +63,11 @@ def ambiguous_links_pdf(corpus_dir: Path) -> Path:
     return corpus_dir / "ambiguous_links.pdf"
 
 
+@pytest.fixture(scope="session")
+def scanned_pdf(corpus_dir: Path) -> Path:
+    return corpus_dir / "scanned.pdf"
+
+
 @pytest.fixture
 def output_pdf(tmp_path: Path) -> Path:
     """Temporary output path for remediated PDFs."""

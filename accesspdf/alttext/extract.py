@@ -161,10 +161,15 @@ def _try_collect(
 
 
 def _xobj_to_pil(xobj: pikepdf.Stream) -> Image.Image | None:
-    """Convert a pikepdf image XObject to a Pillow Image."""
+    """Convert a pikepdf image XObject to a Pillow Image.
+
+    Always returns an RGB or L (grayscale) image so callers can safely
+    save as PNG without mode errors (e.g. CMYK → RGB).
+    """
     try:
         pdfimage = pikepdf.PdfImage(xobj)
-        return pdfimage.as_pil_image()
+        img = pdfimage.as_pil_image()
+        return _ensure_rgb(img)
     except Exception:
         logger.debug("pikepdf.PdfImage extraction failed, trying raw decode", exc_info=True)
 
@@ -188,8 +193,22 @@ def _xobj_to_pil(xobj: pikepdf.Stream) -> Image.Image | None:
 
         expected_size = w * h * (3 if mode == "RGB" else 1) * (bpc // 8)
         if len(raw) >= expected_size:
-            return Image.frombytes(mode, (w, h), raw[:expected_size])
+            img = Image.frombytes(mode, (w, h), raw[:expected_size])
+            return _ensure_rgb(img)
     except Exception:
         logger.debug("Raw image decode failed", exc_info=True)
 
     return None
+
+
+def _ensure_rgb(img: Image.Image) -> Image.Image:
+    """Convert any image mode (CMYK, P, LA, etc.) to RGB for safe PNG export."""
+    if img.mode in ("RGB", "L"):
+        return img
+    if img.mode == "CMYK":
+        return img.convert("RGB")
+    if img.mode in ("RGBA", "LA", "PA"):
+        # Keep alpha by converting to RGBA, which PNG supports
+        return img.convert("RGBA")
+    # Catch-all for any other mode (P, I, F, etc.)
+    return img.convert("RGB")

@@ -85,6 +85,12 @@ def check(
             icon = severity_icon.get(issue.severity.value, " ")
             console.print(f"  {icon} [{issue.rule}] {issue.message}")
 
+    if result.is_scanned:
+        console.print()
+        console.print("[yellow bold]WARNING: This PDF appears to be scanned (image-only).[/yellow bold]")
+        console.print("[yellow]Accessibility fixes cannot add meaningful structure to scanned PDFs.[/yellow]")
+        console.print("[yellow]Run OCR software (e.g. Adobe Acrobat, ocrmypdf) first to add a text layer.[/yellow]")
+
 
 @app.command()
 def fix(
@@ -122,6 +128,19 @@ def fix(
         console.print("[yellow]Completed with warnings.[/yellow]")
         for w in result.warnings:
             console.print(f"  [yellow]![/yellow] {w}")
+
+    # Check if the input was a scanned PDF
+    try:
+        from accesspdf.analyzer import PDFAnalyzer
+
+        scan_check = PDFAnalyzer().analyze(pdf)
+        if scan_check.is_scanned:
+            console.print()
+            console.print("[yellow bold]WARNING: This PDF appears to be scanned (image-only).[/yellow bold]")
+            console.print("[yellow]The fixes applied may not produce meaningful accessibility improvements.[/yellow]")
+            console.print("[yellow]Run OCR software (e.g. Adobe Acrobat, ocrmypdf) first to add a text layer.[/yellow]")
+    except Exception:
+        pass  # Don't block the fix result for a detection check
 
 
 @app.command()
@@ -318,6 +337,15 @@ def generate_alt_text(
         raise typer.Exit(code=1)
 
     console.print(f"[dim]Provider:[/dim] {prov.name}")
+
+    # Preflight check — verify API key and rate limit before starting batch
+    if hasattr(prov, "preflight"):
+        console.print("[dim]Checking API availability...[/dim]")
+        preflight_err = asyncio.run(prov.preflight())
+        if preflight_err:
+            console.print(f"[red]Cannot start:[/red] {preflight_err}")
+            raise typer.Exit(code=1)
+
     console.print(f"[dim]Generating drafts for {len(pending)} image(s)...[/dim]")
 
     # Generate
@@ -325,34 +353,49 @@ def generate_alt_text(
     from accesspdf.providers.base import ImageContext
     from rich.progress import Progress
 
+    _CLI_CONCURRENT = 1  # Sequential — provider throttle handles pacing
+
     async def _generate_all() -> int:
         count = 0
+        sem = asyncio.Semaphore(_CLI_CONCURRENT)
+
         with Progress(console=console) as progress:
             task = progress.add_task("Generating...", total=len(pending))
-            for entry in pending:
-                img = extract_image(pdf, entry.hash)
-                if img is None:
-                    progress.advance(task)
-                    continue
 
-                import io
-                buf = io.BytesIO()
-                img.save(buf, format="PNG")
-                context = ImageContext(
-                    image_bytes=buf.getvalue(),
-                    page=entry.page,
-                    caption=entry.caption,
-                    document_title=sidecar.document,
-                )
+            async def _one(entry: object) -> bool:
+                try:
+                    img = extract_image(pdf, entry.hash)
+                    if img is None:
+                        progress.advance(task)
+                        return False
 
-                result = await prov.generate(context)
-                if result.alt_text:
-                    entry.ai_draft = result.alt_text
-                    count += 1
-                elif result.error:
-                    console.print(f"  [yellow]![/yellow] {entry.id}: {result.error}")
+                    import io
+                    buf = io.BytesIO()
+                    img.save(buf, format="PNG")
+                    context = ImageContext(
+                        image_bytes=buf.getvalue(),
+                        page=entry.page,
+                        caption=entry.caption,
+                        document_title=sidecar.document,
+                    )
+
+                    async with sem:
+                        result = await prov.generate(context)
+
+                    if result.alt_text:
+                        entry.ai_draft = result.alt_text
+                        progress.advance(task)
+                        return True
+                    elif result.error:
+                        console.print(f"  [yellow]![/yellow] {entry.id}: {result.error}")
+                except Exception as exc:
+                    console.print(f"  [yellow]![/yellow] {entry.id}: {exc}")
 
                 progress.advance(task)
+                return False
+
+            results = await asyncio.gather(*[_one(e) for e in pending])
+            count = sum(1 for r in results if r)
         return count
 
     generated = asyncio.run(_generate_all())

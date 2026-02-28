@@ -61,6 +61,7 @@ class PDFAnalyzer:
             self._check_metadata(pdf, result)
             self._check_tags(pdf, result)
             self._extract_images_from_xobjects(pdf, result)
+            self._check_scanned(pdf, result)
             self._check_contrast(pdf, result)
 
         self._build_issues(result)
@@ -225,6 +226,69 @@ class PDFAnalyzer:
                 )
         except Exception:
             logger.debug("Could not scan form XObject on page %d", page_num, exc_info=True)
+
+    # ------------------------------------------------------------------
+    # Scanned PDF detection
+    # ------------------------------------------------------------------
+
+    _TEXT_OPERATORS = frozenset({"Tj", "TJ", "'", '"'})
+
+    def _check_scanned(self, pdf: pikepdf.Pdf, result: AnalysisResult) -> None:
+        """Detect scanned (image-only) PDFs that lack a text layer."""
+        if result.page_count == 0:
+            return
+
+        image_only_pages = 0
+
+        for page in pdf.pages:
+            try:
+                has_image = self._page_has_image(page)
+                has_text = self._page_has_text(page)
+                if has_image and not has_text:
+                    image_only_pages += 1
+            except Exception:
+                logger.debug("Could not check page for scanned content", exc_info=True)
+
+        ratio = image_only_pages / result.page_count
+        if ratio >= 0.9 and image_only_pages >= 1:
+            result.is_scanned = True
+            result.issues.append(
+                AccessibilityIssue(
+                    rule="scanned-pdf",
+                    severity=Severity.WARNING,
+                    message=(
+                        "This PDF appears to be scanned (image-only pages with no "
+                        "text layer). Accessibility fixes cannot add meaningful "
+                        "structure. Run OCR software first to add a text layer."
+                    ),
+                )
+            )
+
+    def _page_has_image(self, page: pikepdf.Page) -> bool:
+        """Return True if the page has at least one Image XObject."""
+        if "/Resources" not in page or "/XObject" not in page["/Resources"]:
+            return False
+        for _name, xobj_ref in page["/Resources"]["/XObject"].items():
+            try:
+                xobj = xobj_ref.resolve() if hasattr(xobj_ref, "resolve") else xobj_ref
+                if isinstance(xobj, pikepdf.Stream):
+                    subtype = str(xobj.get("/Subtype", ""))
+                    if subtype == "/Image":
+                        return True
+            except Exception:
+                pass
+        return False
+
+    def _page_has_text(self, page: pikepdf.Page) -> bool:
+        """Return True if the page's content stream has text-rendering operators."""
+        try:
+            ops = pikepdf.parse_content_stream(page)
+        except Exception:
+            return False
+        for _operands, operator in ops:
+            if str(operator) in self._TEXT_OPERATORS:
+                return True
+        return False
 
     # ------------------------------------------------------------------
     # Contrast checking (WCAG 1.4.3)

@@ -34,11 +34,42 @@
   #file-input { display: none; }
 
   /* Progress */
-  #progress { display: none; text-align: center; padding: 2rem; }
-  .spinner { display: inline-block; width: 2rem; height: 2rem;
-    border: 3px solid var(--border); border-top-color: var(--accent);
-    border-radius: 50%; animation: spin .8s linear infinite; }
-  @keyframes spin { to { transform: rotate(360deg); } }
+  #progress { display: none; padding: 2rem; }
+  .progress-container {
+    background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow);
+    padding: 1.5rem; max-width: 500px; margin: 0 auto;
+  }
+  .progress-title {
+    font-weight: 600; font-size: 1rem; text-align: center; margin-bottom: 1.25rem;
+  }
+  .progress-bar-track {
+    width: 100%; height: 8px; background: #e9ecef; border-radius: 4px;
+    overflow: hidden; margin-bottom: 1.25rem;
+  }
+  .progress-bar-fill {
+    height: 100%; background: var(--accent); border-radius: 4px;
+    transition: width .4s ease; width: 0%;
+  }
+  .progress-steps { display: flex; flex-direction: column; gap: .5rem; }
+  .progress-step {
+    display: flex; align-items: center; gap: .6rem; font-size: .875rem;
+    color: var(--muted);
+  }
+  .progress-step.active { color: var(--accent); font-weight: 500; }
+  .progress-step.done { color: var(--success); }
+  .step-icon {
+    width: 20px; height: 20px; border-radius: 50%; border: 2px solid var(--border);
+    display: flex; align-items: center; justify-content: center;
+    font-size: .7rem; flex-shrink: 0;
+  }
+  .progress-step.active .step-icon {
+    border-color: var(--accent); background: var(--accent); color: #fff;
+    animation: pulse 1s ease-in-out infinite;
+  }
+  .progress-step.done .step-icon {
+    border-color: var(--success); background: var(--success); color: #fff;
+  }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .6; } }
 
   /* Error */
   .error-msg { background: #f8d7da; color: #842029; padding: .75rem 1rem;
@@ -195,6 +226,40 @@
     margin-top: .5rem; padding: .6rem .75rem; background: #fff3cd; border-radius: 4px;
     font-size: .85rem; color: #664d03;
   }
+  .scanned-warning {
+    background: #fff3cd; color: #664d03; padding: .75rem 1rem; border-radius: var(--radius);
+    margin-bottom: 1rem; border-left: 4px solid var(--warning); font-size: .9rem;
+  }
+  .scanned-warning strong { display: block; margin-bottom: .25rem; }
+  .batch-file-item .scanned-label {
+    font-size: .75rem; color: #664d03; background: #fff3cd; padding: .1rem .4rem;
+    border-radius: 3px; margin-left: .25rem;
+  }
+
+  /* Mode selector */
+  .mode-selector {
+    display: flex; justify-content: center; gap: 1.5rem; margin-bottom: 1rem;
+  }
+  .mode-selector label {
+    display: flex; align-items: center; gap: .4rem; font-size: .9rem; cursor: pointer;
+    color: var(--muted);
+  }
+  .mode-selector input:checked + span { color: var(--fg); font-weight: 500; }
+
+  /* Batch file list in progress */
+  .batch-file-list { margin-top: .75rem; font-size: .85rem; }
+  .batch-file-item {
+    display: flex; align-items: center; gap: .5rem; padding: .3rem 0;
+  }
+  .batch-file-item .file-status {
+    width: 18px; height: 18px; border-radius: 50%; border: 2px solid var(--border);
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: .65rem; flex-shrink: 0;
+  }
+  .batch-file-item.done .file-status { border-color: var(--success); background: var(--success); color: #fff; }
+  .batch-file-item.fixing .file-status { border-color: var(--accent); background: var(--accent); color: #fff; animation: pulse 1s ease-in-out infinite; }
+  .batch-file-item.error .file-status { border-color: var(--danger); background: var(--danger); color: #fff; }
+  .batch-file-item .file-error { color: var(--danger); font-size: .8rem; margin-left: .25rem; }
 
   footer { text-align: center; color: var(--muted); font-size: .8rem; padding: 2rem 0 1rem; }
 </style>
@@ -206,19 +271,70 @@
     <p>Upload a PDF to fix accessibility issues and add image descriptions</p>
   </header>
 
+  <!-- Mode selector -->
+  <div class="mode-selector" id="mode-selector">
+    <label><input type="radio" name="mode" value="single" checked> <span>Fix one PDF</span></label>
+    <label><input type="radio" name="mode" value="batch"> <span>Batch fix (structural only)</span></label>
+  </div>
+
   <!-- Upload -->
   <div id="upload-section">
     <div id="drop-zone" tabindex="0" role="button" aria-label="Upload PDF file">
       <div class="icon" aria-hidden="true">&#128196;</div>
-      <p>Drag &amp; drop a PDF here, or click to browse</p>
+      <p id="drop-zone-text">Drag &amp; drop a PDF here, or click to browse</p>
     </div>
     <input type="file" id="file-input" accept=".pdf">
+    <input type="file" id="batch-file-input" accept=".pdf" multiple style="display:none">
   </div>
 
   <!-- Processing -->
-  <div id="progress">
-    <div class="spinner" aria-label="Processing"></div>
-    <p id="progress-text" style="margin-top:.75rem">Processing your PDF&hellip;</p>
+  <div id="progress" role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">
+    <div class="progress-container">
+      <div class="progress-title" id="progress-title">Processing your PDF...</div>
+      <div class="progress-bar-track">
+        <div class="progress-bar-fill" id="progress-fill"></div>
+      </div>
+      <div class="progress-steps">
+        <div class="progress-step" id="step-uploading" data-stage="uploading">
+          <span class="step-icon"></span> Uploading PDF
+        </div>
+        <div class="progress-step" id="step-analyzing" data-stage="analyzing">
+          <span class="step-icon"></span> Analyzing accessibility
+        </div>
+        <div class="progress-step" id="step-fixing" data-stage="fixing">
+          <span class="step-icon"></span> Fixing structure
+        </div>
+        <div class="progress-step" id="step-loading" data-stage="loading">
+          <span class="step-icon"></span> Extracting images
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Batch processing -->
+  <div id="batch-progress" style="display:none">
+    <div class="progress-container">
+      <div class="progress-title" id="batch-progress-title">Fixing PDFs...</div>
+      <div class="progress-bar-track">
+        <div class="progress-bar-fill" id="batch-progress-fill"></div>
+      </div>
+      <div class="batch-file-list" id="batch-file-list"></div>
+    </div>
+  </div>
+
+  <!-- Batch results -->
+  <div id="batch-results" style="display:none">
+    <div class="summary-bar">
+      <span class="filename">Batch results</span>
+      <span class="stat">Total: <b id="batch-stat-total">0</b></span>
+      <span class="stat" style="color:var(--success)">Done: <b id="batch-stat-done">0</b></span>
+      <span class="stat" style="color:var(--danger)">Failed: <b id="batch-stat-failed">0</b></span>
+    </div>
+    <div class="batch-file-list" id="batch-results-list" style="padding:.5rem 0"></div>
+    <div class="actions-bar">
+      <button class="btn btn-success" id="btn-batch-download">Download all as ZIP</button>
+      <button class="btn btn-outline" id="btn-batch-new">Upload more</button>
+    </div>
   </div>
 
   <!-- Results -->
@@ -228,6 +344,14 @@
       <span class="stat">Images: <b id="stat-total">0</b></span>
       <span class="stat">Approved: <b id="stat-approved">0</b></span>
       <span class="stat">Needs review: <b id="stat-needs">0</b></span>
+    </div>
+
+    <!-- Scanned PDF warning -->
+    <div class="scanned-warning" id="scanned-warning" style="display:none">
+      <strong>Scanned PDF detected</strong>
+      This PDF appears to be scanned (image-only pages with no text layer).
+      The fixes applied may not produce meaningful accessibility improvements.
+      Run OCR software (e.g. Adobe Acrobat, <a href="https://github.com/ocrmypdf/OCRmyPDF" target="_blank" rel="noopener">ocrmypdf</a>) first to add a text layer.
     </div>
 
     <!-- Accessibility report -->
@@ -242,12 +366,12 @@
     <div class="ai-panel" id="ai-panel">
       <div class="ai-panel-header">
         <h3>Alt text mode</h3>
-        <span style="font-size:.85rem;color:var(--muted)" id="mode-label">Manual</span>
+        <span style="font-size:.85rem;color:var(--text);font-weight:500" id="mode-label">Manual</span>
         <label class="toggle-switch">
           <input type="checkbox" id="ai-toggle">
           <span class="toggle-slider"></span>
         </label>
-        <span style="font-size:.85rem;color:var(--accent);font-weight:500">AI</span>
+        <span style="font-size:.85rem;color:var(--muted);font-weight:500" id="ai-label-right">AI</span>
       </div>
       <div class="ai-controls" id="ai-controls">
         <div class="field">
@@ -287,7 +411,8 @@
   const fileInput = document.getElementById("file-input");
   const uploadSection = document.getElementById("upload-section");
   const progressDiv = document.getElementById("progress");
-  const progressText = document.getElementById("progress-text");
+  const progressTitle = document.getElementById("progress-title");
+  const progressFill = document.getElementById("progress-fill");
   const resultsDiv = document.getElementById("results");
   const imageList = document.getElementById("image-list");
   const btnSave = document.getElementById("btn-save");
@@ -302,14 +427,29 @@
   const btnGenerate = document.getElementById("btn-generate");
   const aiPanel = document.getElementById("ai-panel");
 
+  const batchFileInput = document.getElementById("batch-file-input");
+  const dropZoneText = document.getElementById("drop-zone-text");
+  const modeSelector = document.getElementById("mode-selector");
+  const batchProgressDiv = document.getElementById("batch-progress");
+  const batchProgressTitle = document.getElementById("batch-progress-title");
+  const batchProgressFill = document.getElementById("batch-progress-fill");
+  const batchFileList = document.getElementById("batch-file-list");
+  const batchResultsDiv = document.getElementById("batch-results");
+  const batchResultsList = document.getElementById("batch-results-list");
+  const btnBatchDownload = document.getElementById("btn-batch-download");
+  const btnBatchNew = document.getElementById("btn-batch-new");
+
   let currentJobId = null;
+  let currentBatchId = null;
+  let currentMode = "single";
   let imageData = [];
 
   // --- AI toggle ---
   aiToggle.addEventListener("change", () => {
     const on = aiToggle.checked;
     aiControls.classList.toggle("visible", on);
-    modeLabel.textContent = on ? "AI" : "Manual";
+    modeLabel.style.color = on ? "var(--muted)" : "var(--text)";
+    document.getElementById("ai-label-right").style.color = on ? "var(--accent)" : "var(--muted)";
   });
 
   providerSelect.addEventListener("change", () => {
@@ -329,18 +469,71 @@
     }
   });
 
+  // --- Mode switching ---
+  modeSelector.querySelectorAll("input[name='mode']").forEach(radio => {
+    radio.addEventListener("change", () => {
+      currentMode = radio.value;
+      if (currentMode === "batch") {
+        dropZoneText.textContent = "Drag & drop PDFs here, or click to browse (multiple files)";
+        dropZone.setAttribute("aria-label", "Upload multiple PDF files");
+      } else {
+        dropZoneText.textContent = "Drag & drop a PDF here, or click to browse";
+        dropZone.setAttribute("aria-label", "Upload PDF file");
+      }
+    });
+  });
+
   // --- Upload handling ---
-  dropZone.addEventListener("click", () => fileInput.click());
-  dropZone.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") fileInput.click(); });
+  dropZone.addEventListener("click", () => {
+    if (currentMode === "batch") batchFileInput.click();
+    else fileInput.click();
+  });
+  dropZone.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      if (currentMode === "batch") batchFileInput.click();
+      else fileInput.click();
+    }
+  });
   fileInput.addEventListener("change", () => { if (fileInput.files.length) upload(fileInput.files[0]); });
+  batchFileInput.addEventListener("change", () => {
+    if (batchFileInput.files.length) uploadBatch(batchFileInput.files);
+  });
 
   dropZone.addEventListener("dragover", (e) => { e.preventDefault(); dropZone.classList.add("drag-over"); });
   dropZone.addEventListener("dragleave", () => dropZone.classList.remove("drag-over"));
   dropZone.addEventListener("drop", (e) => {
     e.preventDefault();
     dropZone.classList.remove("drag-over");
-    if (e.dataTransfer.files.length) upload(e.dataTransfer.files[0]);
+    if (!e.dataTransfer.files.length) return;
+    if (currentMode === "batch") uploadBatch(e.dataTransfer.files);
+    else upload(e.dataTransfer.files[0]);
   });
+
+  // Progress stage config: order, labels, percentages
+  const STAGES = [
+    { key: "uploading", label: "Uploading PDF", pct: 10 },
+    { key: "analyzing", label: "Analyzing accessibility", pct: 35 },
+    { key: "fixing", label: "Fixing structure", pct: 65 },
+    { key: "loading", label: "Extracting images", pct: 90 },
+  ];
+
+  function updateProgressUI(stage) {
+    const stageIdx = STAGES.findIndex(s => s.key === stage);
+    const pct = stageIdx >= 0 ? STAGES[stageIdx].pct : 0;
+    const label = stageIdx >= 0 ? STAGES[stageIdx].label + "..." : "Processing...";
+
+    progressFill.style.width = pct + "%";
+    progressTitle.textContent = label;
+    progressDiv.setAttribute("aria-valuenow", pct);
+
+    STAGES.forEach((s, i) => {
+      const el = document.getElementById("step-" + s.key);
+      if (!el) return;
+      el.classList.remove("active", "done");
+      if (i < stageIdx) el.classList.add("done");
+      else if (i === stageIdx) el.classList.add("active");
+    });
+  }
 
   async function upload(file) {
     if (!file.name.toLowerCase().endsWith(".pdf")) {
@@ -349,14 +542,23 @@
     }
 
     uploadSection.style.display = "none";
+    modeSelector.style.display = "none";
     progressDiv.style.display = "block";
-    progressText.textContent = "Processing your PDF\u2026";
     resultsDiv.style.display = "none";
+
+    // Reset progress bar
+    progressFill.style.width = "0%";
+    STAGES.forEach(s => {
+      const el = document.getElementById("step-" + s.key);
+      if (el) el.classList.remove("active", "done");
+    });
+    updateProgressUI("uploading");
 
     const form = new FormData();
     form.append("file", file);
 
     try {
+      // Upload and get job_id back immediately
       const resp = await fetch("/api/upload", { method: "POST", body: form });
       const data = await resp.json();
 
@@ -364,16 +566,58 @@
         showError(data.detail || "Upload failed.");
         return;
       }
-      if (data.error) {
-        showError("Processing error: " + data.error);
-        return;
-      }
 
       currentJobId = data.job_id;
-      imageData = data.images || [];
-      showResults(data);
+
+      // Poll for status updates
+      await pollForCompletion(data.job_id);
     } catch (err) {
       showError("Network error: " + err.message);
+    }
+  }
+
+  async function pollForCompletion(jobId) {
+    const POLL_INTERVAL = 500; // ms
+
+    while (true) {
+      await new Promise(r => setTimeout(r, POLL_INTERVAL));
+
+      try {
+        const resp = await fetch("/api/job/" + jobId);
+        const data = await resp.json();
+
+        if (!resp.ok) {
+          showError("Job check failed.");
+          return;
+        }
+
+        // Update progress bar
+        updateProgressUI(data.stage);
+
+        if (data.stage === "error") {
+          showError("Processing error: " + (data.error || "Unknown error"));
+          return;
+        }
+
+        if (data.stage === "done") {
+          // Finish the progress bar at 100%
+          progressFill.style.width = "100%";
+          progressTitle.textContent = "Done!";
+          STAGES.forEach(s => {
+            const el = document.getElementById("step-" + s.key);
+            if (el) { el.classList.remove("active"); el.classList.add("done"); }
+          });
+
+          // Brief pause to show 100% before switching to results
+          await new Promise(r => setTimeout(r, 400));
+
+          imageData = data.images || [];
+          showResults(data);
+          return;
+        }
+      } catch (err) {
+        // Network hiccup -- keep polling
+      }
     }
   }
 
@@ -394,6 +638,11 @@
 
     document.getElementById("result-filename").textContent = data.filename || "PDF";
     updateStats(data.stats);
+
+    // Show scanned PDF warning if applicable
+    const scannedWarning = document.getElementById("scanned-warning");
+    const isScanned = data.analysis && data.analysis.is_scanned;
+    scannedWarning.style.display = isScanned ? "block" : "none";
 
     // Render accessibility report
     renderReport(data.analysis);
@@ -540,7 +789,7 @@
     if (!currentJobId || imageData.length === 0) return;
 
     btnGenerate.disabled = true;
-    btnGenerate.textContent = "Generating\u2026";
+    btnGenerate.textContent = "Starting...";
 
     const payload = { provider: providerSelect.value };
     const key = apiKeyInput.value.trim();
@@ -561,29 +810,94 @@
         return;
       }
 
-      // Update image data with new drafts
-      if (data.images) {
-        imageData = data.images;
-        renderImageCards();
-      }
-
-      // Refresh stats
-      const statusResp = await fetch(`/api/job/${currentJobId}`);
-      const statusData = await statusResp.json();
-      updateStats(statusData.stats);
-
-      if (data.errors && data.errors.length > 0) {
-        alert(`Generated ${data.generated} draft(s), but ${data.errors.length} failed. Check provider settings.`);
-      }
-
-      btnGenerate.textContent = `Generated ${data.generated}!`;
-      setTimeout(() => { btnGenerate.textContent = "Generate all"; btnGenerate.disabled = false; }, 2000);
+      // Poll for generation progress
+      await pollForGeneration();
     } catch (err) {
       alert("Generation error: " + err.message);
       btnGenerate.textContent = "Generate all";
       btnGenerate.disabled = false;
     }
   });
+
+  function _updateDraftsLive(freshImages) {
+    // Update cards in-place as AI drafts arrive (without re-rendering everything)
+    freshImages.forEach((img, idx) => {
+      if (!img.ai_draft) return;
+      // Skip if we already showed this draft
+      if (imageData[idx] && imageData[idx].ai_draft === img.ai_draft) return;
+
+      // Update our local data
+      if (imageData[idx]) imageData[idx].ai_draft = img.ai_draft;
+
+      // Find the card and inject the draft
+      const card = imageList.children[idx];
+      if (!card) return;
+
+      const draftBox = card.querySelector(".ai-draft-box");
+      if (draftBox) {
+        draftBox.classList.add("visible");
+        const draftText = draftBox.querySelector(".draft-text");
+        if (draftText) draftText.textContent = img.ai_draft;
+      }
+
+      // Auto-fill the textarea if it's still empty
+      const textarea = card.querySelector("textarea");
+      if (textarea && !textarea.value.trim()) {
+        textarea.value = img.ai_draft;
+        imageData[idx].alt_text = img.ai_draft;
+      }
+    });
+  }
+
+  async function pollForGeneration() {
+    const POLL_INTERVAL = 1000; // ms
+
+    while (true) {
+      await new Promise(r => setTimeout(r, POLL_INTERVAL));
+
+      try {
+        const resp = await fetch("/api/job/" + currentJobId);
+        const data = await resp.json();
+        if (!resp.ok) break;
+
+        const gs = data.gen_stage;
+        const cur = data.gen_current || 0;
+        const tot = data.gen_total || 0;
+
+        if (gs === "generating") {
+          btnGenerate.textContent = tot > 0
+            ? `Generating ${cur}/${tot}...`
+            : "Generating...";
+          // Live-update cards as drafts arrive
+          _updateDraftsLive(data.images || []);
+          continue;
+        }
+
+        if (gs === "done" || gs === "error") {
+          // Refresh image data and cards
+          imageData = data.images || [];
+          renderImageCards();
+          updateStats(data.stats);
+
+          const errs = data.gen_errors || [];
+          if (errs.length > 0) {
+            const generated = tot - errs.length;
+            alert(`Generated ${generated} draft(s), but ${errs.length} failed.\n${errs[0].error}`);
+          }
+
+          const generated = imageData.filter(i => i.ai_draft).length;
+          btnGenerate.textContent = generated > 0 ? `Generated ${generated}!` : "Generate all";
+          setTimeout(() => { btnGenerate.textContent = "Generate all"; btnGenerate.disabled = false; }, 2500);
+          return;
+        }
+      } catch (err) {
+        // Network hiccup -- keep polling
+      }
+    }
+
+    btnGenerate.textContent = "Generate all";
+    btnGenerate.disabled = false;
+  }
 
   // --- Card actions ---
   imageList.addEventListener("click", (e) => {
@@ -679,15 +993,158 @@
     }
   });
 
+  // --- Batch upload & progress ---
+  async function uploadBatch(files) {
+    // Validate all are PDFs
+    const pdfs = [];
+    for (let i = 0; i < files.length; i++) {
+      if (!files[i].name.toLowerCase().endsWith(".pdf")) {
+        alert("Only PDF files are accepted. '" + files[i].name + "' is not a PDF.");
+        return;
+      }
+      pdfs.push(files[i]);
+    }
+    if (pdfs.length === 0) return;
+
+    uploadSection.style.display = "none";
+    modeSelector.style.display = "none";
+    batchProgressDiv.style.display = "block";
+    batchResultsDiv.style.display = "none";
+
+    // Reset progress
+    batchProgressFill.style.width = "0%";
+    batchProgressTitle.textContent = "Uploading " + pdfs.length + " file(s)...";
+    batchFileList.innerHTML = pdfs.map(f =>
+      '<div class="batch-file-item pending"><span class="file-status"></span> ' + escapeHtml(f.name) + '</div>'
+    ).join("");
+
+    const form = new FormData();
+    pdfs.forEach(f => form.append("files", f));
+
+    try {
+      const resp = await fetch("/api/batch/upload", { method: "POST", body: form });
+      const data = await resp.json();
+
+      if (!resp.ok) {
+        showBatchError(data.detail || "Upload failed.");
+        return;
+      }
+
+      currentBatchId = data.batch_id;
+      batchProgressTitle.textContent = "Fixing " + data.total_files + " PDF(s)...";
+      await pollBatchProgress(data.batch_id);
+    } catch (err) {
+      showBatchError("Network error: " + err.message);
+    }
+  }
+
+  async function pollBatchProgress(batchId) {
+    const POLL_INTERVAL = 500;
+
+    while (true) {
+      await new Promise(r => setTimeout(r, POLL_INTERVAL));
+
+      try {
+        const resp = await fetch("/api/batch/" + batchId);
+        const data = await resp.json();
+        if (!resp.ok) { showBatchError("Batch check failed."); return; }
+
+        // Update progress bar
+        const total = data.total_files || 1;
+        const done = data.done_count + data.failed_count;
+        const pct = Math.round((done / total) * 100);
+        batchProgressFill.style.width = pct + "%";
+        batchProgressTitle.textContent = "Fixing PDFs... (" + done + "/" + total + ")";
+
+        // Update per-file list
+        batchFileList.innerHTML = data.files.map(f => {
+          const cls = f.status === "done" ? "done"
+            : f.status === "fixing" ? "fixing"
+            : f.status === "error" ? "error" : "pending";
+          const icon = f.status === "done" ? "ok"
+            : f.status === "error" ? "X"
+            : f.status === "fixing" ? "..." : "";
+          const errHtml = f.error ? ' <span class="file-error">(' + escapeHtml(f.error) + ')</span>' : "";
+          return '<div class="batch-file-item ' + cls + '">'
+            + '<span class="file-status">' + icon + '</span> '
+            + escapeHtml(f.name) + errHtml + '</div>';
+        }).join("");
+
+        if (data.stage === "done" || data.stage === "error") {
+          batchProgressFill.style.width = "100%";
+          batchProgressTitle.textContent = "Done!";
+          await new Promise(r => setTimeout(r, 400));
+          showBatchResults(data);
+          return;
+        }
+      } catch (err) {
+        // Network hiccup -- keep polling
+      }
+    }
+  }
+
+  function showBatchError(msg) {
+    batchProgressDiv.style.display = "none";
+    modeSelector.style.display = "flex";
+    uploadSection.style.display = "block";
+    const el = document.createElement("div");
+    el.className = "error-msg";
+    el.textContent = msg;
+    uploadSection.insertBefore(el, uploadSection.firstChild);
+    setTimeout(() => el.remove(), 8000);
+  }
+
+  function showBatchResults(data) {
+    batchProgressDiv.style.display = "none";
+    batchResultsDiv.style.display = "block";
+
+    document.getElementById("batch-stat-total").textContent = data.total_files;
+    document.getElementById("batch-stat-done").textContent = data.done_count;
+    document.getElementById("batch-stat-failed").textContent = data.failed_count;
+
+    batchResultsList.innerHTML = data.files.map(f => {
+      const cls = f.status === "done" ? "done" : f.status === "error" ? "error" : "pending";
+      const icon = f.status === "done" ? "ok" : f.status === "error" ? "X" : "";
+      const errHtml = f.error ? ' <span class="file-error">(' + escapeHtml(f.error) + ')</span>' : "";
+      const scannedHtml = f.is_scanned ? ' <span class="scanned-label">scanned</span>' : "";
+      return '<div class="batch-file-item ' + cls + '">'
+        + '<span class="file-status">' + icon + '</span> '
+        + escapeHtml(f.name) + scannedHtml + errHtml + '</div>';
+    }).join("");
+
+    btnBatchDownload.disabled = data.done_count === 0;
+  }
+
+  btnBatchDownload.addEventListener("click", () => {
+    if (!currentBatchId) return;
+    const a = document.createElement("a");
+    a.href = "/api/batch/" + currentBatchId + "/download";
+    a.download = "";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  });
+
+  btnBatchNew.addEventListener("click", () => {
+    currentBatchId = null;
+    batchResultsDiv.style.display = "none";
+    batchProgressDiv.style.display = "none";
+    modeSelector.style.display = "flex";
+    uploadSection.style.display = "block";
+    batchFileInput.value = "";
+  });
+
   btnNew.addEventListener("click", () => {
     currentJobId = null;
     imageData = [];
     resultsDiv.style.display = "none";
     uploadSection.style.display = "block";
+    modeSelector.style.display = "flex";
     fileInput.value = "";
     aiToggle.checked = false;
     aiControls.classList.remove("visible");
-    modeLabel.textContent = "Manual";
+    modeLabel.style.color = "var(--text)";
+    document.getElementById("ai-label-right").style.color = "var(--muted)";
   });
 })();
 </script>
