@@ -349,7 +349,7 @@ def generate_alt_text(
     console.print(f"[dim]Generating drafts for {len(pending)} image(s)...[/dim]")
 
     # Generate
-    from accesspdf.alttext.extract import extract_image
+    from accesspdf.alttext.extract import extract_image, prepare_for_ai
     from accesspdf.providers.base import ImageContext
     from rich.progress import Progress
 
@@ -369,11 +369,8 @@ def generate_alt_text(
                         progress.advance(task)
                         return False
 
-                    import io
-                    buf = io.BytesIO()
-                    img.save(buf, format="PNG")
                     context = ImageContext(
-                        image_bytes=buf.getvalue(),
+                        image_bytes=prepare_for_ai(img),
                         page=entry.page,
                         caption=entry.caption,
                         document_title=sidecar.document,

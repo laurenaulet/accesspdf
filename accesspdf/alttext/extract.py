@@ -201,6 +201,27 @@ def _xobj_to_pil(xobj: pikepdf.Stream) -> Image.Image | None:
     return None
 
 
+def prepare_for_ai(img: Image.Image, *, max_dim: int = 512) -> bytes:
+    """Resize a PIL image and return PNG bytes ready for an AI provider.
+
+    Vision models don't need full-resolution PDF images.  Downsizing to
+    *max_dim* pixels on the longest side dramatically reduces payload size
+    and inference time while preserving enough detail for alt-text generation.
+    """
+    # Resize if larger than max_dim on either axis
+    w, h = img.size
+    if max(w, h) > max_dim:
+        scale = max_dim / max(w, h)
+        new_w = max(1, int(w * scale))
+        new_h = max(1, int(h * scale))
+        img = img.resize((new_w, new_h), Image.LANCZOS)
+        logger.debug("Resized image from %dx%d to %dx%d for AI", w, h, new_w, new_h)
+
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
 def _ensure_rgb(img: Image.Image) -> Image.Image:
     """Convert any image mode (CMYK, P, LA, etc.) to RGB for safe PNG export."""
     if img.mode in ("RGB", "L"):

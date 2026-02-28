@@ -122,6 +122,7 @@
   }
   #api-key-field { display: none; }
   #api-key-field.visible { display: flex; }
+  #ollama-model-field { display: flex; }
 
   .actions-bar { display: flex; gap: .75rem; margin-bottom: 1.5rem; flex-wrap: wrap; }
 
@@ -377,13 +378,25 @@
         <div class="field">
           <label for="provider-select">Provider</label>
           <select id="provider-select">
-            <option value="gemini" selected>Google Gemini (free)</option>
-            <option value="ollama">Ollama (local)</option>
+            <option value="ollama" selected>Ollama (recommended)</option>
+            <option value="gemini">Google Gemini (free tier)</option>
             <option value="anthropic">Anthropic (Claude)</option>
             <option value="openai">OpenAI (GPT-4)</option>
           </select>
+          <div id="ollama-hint" style="font-size:.75rem;color:var(--muted);margin-top:2px;line-height:1.4">
+            Free, local, no API key needed.
+            <a href="https://ollama.com" target="_blank" rel="noopener" style="color:var(--accent)">Install Ollama</a>,
+            then pull a vision model below.
+          </div>
         </div>
-        <div class="field visible" id="api-key-field">
+        <div class="field" id="ollama-model-field">
+          <label for="ollama-model-select">Model</label>
+          <select id="ollama-model-select">
+            <option value="llava">llava (best quality)</option>
+            <option value="moondream">moondream (faster)</option>
+          </select>
+        </div>
+        <div class="field" id="api-key-field">
           <label for="api-key-input">API key</label>
           <input type="password" id="api-key-input" placeholder="Paste your API key here" style="width:260px">
           <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener"
@@ -452,9 +465,15 @@
     document.getElementById("ai-label-right").style.color = on ? "var(--accent)" : "var(--muted)";
   });
 
+  const ollamaHint = document.getElementById("ollama-hint");
+  const ollamaModelField = document.getElementById("ollama-model-field");
+  const ollamaModelSelect = document.getElementById("ollama-model-select");
+
   providerSelect.addEventListener("change", () => {
     const isOllama = providerSelect.value === "ollama";
     apiKeyField.classList.toggle("visible", !isOllama);
+    ollamaHint.style.display = isOllama ? "" : "none";
+    ollamaModelField.style.display = isOllama ? "" : "none";
     // Update the "get key" link based on provider
     const keyLink = apiKeyField.querySelector("a");
     if (keyLink) {
@@ -794,6 +813,7 @@
     const payload = { provider: providerSelect.value };
     const key = apiKeyInput.value.trim();
     if (key) payload.api_key = key;
+    if (providerSelect.value === "ollama") payload.model = ollamaModelSelect.value;
 
     try {
       const resp = await fetch(`/api/job/${currentJobId}/generate`, {

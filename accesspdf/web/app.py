@@ -147,7 +147,7 @@ def _generate_alt_text(job: _Job, provider: object, pending_entries: list) -> No
     import asyncio
 
     async def _run() -> None:
-        from accesspdf.alttext.extract import extract_image
+        from accesspdf.alttext.extract import extract_image, prepare_for_ai
         from accesspdf.providers.base import ImageContext
 
         job.gen_stage = "generating"
@@ -167,10 +167,8 @@ def _generate_alt_text(job: _Job, provider: object, pending_entries: list) -> No
                     job.gen_current = completed
                     return
 
-                buf = io.BytesIO()
-                img.save(buf, format="PNG")
                 context = ImageContext(
-                    image_bytes=buf.getvalue(),
+                    image_bytes=prepare_for_ai(img),
                     page=entry.page,
                     caption=entry.caption,
                     document_title=job.sidecar.document,
@@ -428,9 +426,8 @@ def create_app() -> FastAPI:
 
         # Preflight check — verify API key and rate limit before starting batch
         if hasattr(provider, "preflight"):
-            import asyncio
             try:
-                error = asyncio.run(provider.preflight())
+                error = await provider.preflight()
             except Exception as exc:
                 error = str(exc)
             if error:

@@ -59,7 +59,18 @@ class OllamaProvider:
             # First image can take a long time (model loads CLIP weights)
             async with httpx.AsyncClient(timeout=300.0) as client:
                 resp = await client.post(f"{self._base_url}/api/generate", json=payload)
-                resp.raise_for_status()
+
+                if resp.status_code != 200:
+                    # Extract the actual error message from Ollama
+                    try:
+                        body = resp.json()
+                        err_msg = body.get("error", resp.text)
+                    except Exception:
+                        err_msg = resp.text
+                    error = f"Ollama error ({resp.status_code}): {err_msg}"
+                    logger.error(error)
+                    return AltTextResult(error=error)
+
                 data = resp.json()
 
             alt_text = data.get("response", "").strip()
@@ -68,9 +79,46 @@ class OllamaProvider:
                 confidence=0.7,
                 usage={"total_duration_ns": data.get("total_duration", 0)},
             )
+        except httpx.ConnectError:
+            error = (
+                "Cannot connect to Ollama. Is it running? "
+                "Start it with: ollama serve"
+            )
+            logger.error(error)
+            return AltTextResult(error=error)
         except Exception as exc:
             logger.error("Ollama generation failed: %s", exc)
             return AltTextResult(error=str(exc))
+
+    async def preflight(self) -> str | None:
+        """Check Ollama is running and the model is available."""
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                # Check server is up
+                resp = await client.get(f"{self._base_url}/api/tags")
+                if resp.status_code != 200:
+                    return "Cannot reach Ollama server. Is it running? Start with: ollama serve"
+
+                # Check model is pulled
+                data = resp.json()
+                models = [m.get("name", "") for m in data.get("models", [])]
+                # Ollama model names can be "llava:latest" — check prefix match
+                model_found = any(
+                    m == self._model or m.startswith(self._model + ":")
+                    for m in models
+                )
+                if not model_found:
+                    available = ", ".join(m.split(":")[0] for m in models[:5]) or "none"
+                    return (
+                        f"Model '{self._model}' not found. "
+                        f"Pull it first: ollama pull {self._model}\n"
+                        f"Available models: {available}"
+                    )
+                return None  # All good
+        except httpx.ConnectError:
+            return "Cannot connect to Ollama. Is it running? Start with: ollama serve"
+        except Exception as exc:
+            return f"Ollama check failed: {exc}"
 
     async def is_available(self) -> bool:
         try:
