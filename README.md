@@ -1,261 +1,123 @@
 # AccessPDF
 
-A Python command-line tool that makes PDFs accessible. It fixes structural problems that prevent screen readers from understanding your document, and gives you a workflow for adding image descriptions (alt text) -- either manually or with AI assistance.
+Make PDFs accessible. Fixes structure, reading order, tables, and headings automatically -- then helps you add image descriptions with local AI or by hand.
 
-Targets **WCAG 2.1 AA** and **PDF/UA** compliance.
+Targets **WCAG 2.1 AA** and **PDF/UA**.
 
-## Why does this matter?
-
-PDFs are everywhere -- academic papers, government forms, reports. But most PDFs are inaccessible to people who use screen readers. Common problems include missing document structure (tags), no language set, tables without headers, and images without descriptions. AccessPDF fixes the structural issues automatically and helps you write the image descriptions.
-
-## Installation
+## Quick start
 
 ```bash
-pip install accesspdf
-```
-
-This gives you the CLI tool and everything needed for structural fixes, manual alt text, and **AI-powered alt text via Google Gemini** (free, no extra install). For optional features:
-
-```bash
-# Browser-based UI for reviewing images and writing alt text
-pip install accesspdf[web]
-
-# Additional AI providers (Gemini works out of the box -- these are optional)
-pip install accesspdf[anthropic]   # Claude
-pip install accesspdf[openai]      # GPT-4
-```
-
-## How to use it
-
-### Step 1: Check your PDF
-
-See what accessibility issues exist before changing anything. This is read-only -- it never touches your file.
-
-```bash
-accesspdf check my-document.pdf
-```
-
-You'll get a report like this:
-
-```
-  Accessibility Report: my-document.pdf
-+--------------------------------------+
-| Metric       | Value                 |
-|--------------+-----------------------|
-| Pages        | 12                    |
-| Tagged       | No                    |
-| Language set | No                    |
-| Title        | Not set               |
-| Images found | 5                     |
-| Links found  | 0                     |
-| Tables found | 0                     |
-| Contrast     | OK                    |
-| Errors       | 4                     |
-| Warnings     | 1                     |
-+--------------------------------------+
-
-  X [tagged-pdf] PDF is not tagged. Screen readers cannot interpret the document structure.
-  X [document-lang] Document language is not set.
-  ! [document-title] Document title is not set in metadata.
-  X [image-alt-text] 5 image(s) missing alt text.
-```
-
-### Step 2: Fix structural issues
-
-This creates a new file with all the structural fixes applied. **Your original PDF is never modified.**
-
-```bash
-accesspdf fix my-document.pdf -o my-document_accessible.pdf
-```
-
-This automatically:
-- Adds the tag structure tree (Document, paragraphs, spans)
-- Sets the document language
-- Detects headings from font sizes and creates H1-H6 tags
-- Figures out reading order from the page layout
-- Finds tables and creates Table/TR/TH/TD structure with header references
-- Tags hyperlinks with /Link elements
-- Creates a bookmark outline from headings
-
-After fixing, a **sidecar file** (`my-document.alttext.yaml`) is created next to your PDF. This is where image descriptions live.
-
-### Step 3: Add image descriptions
-
-This is the part that needs a human. Every image in your PDF needs a description so screen readers can convey what the image shows. You have three options:
-
-**Option A: Terminal UI**
-
-```bash
-accesspdf review my-document_accessible.pdf
-```
-
-This opens an interactive terminal app. You'll see each image, and you can type a description, mark it as approved, or mark decorative images (icons, dividers) so screen readers skip them.
-
-**Option B: Web UI (browser)**
-
-```bash
+pip install "accesspdf[web]"
 accesspdf serve
 ```
 
-This opens a browser window at `http://localhost:8080`. Upload your fixed PDF, see all the images laid out, and type descriptions right in the browser. When you're done, download the final PDF.
+This opens a browser UI at `http://localhost:8080`. Upload a PDF, get an accessibility report, download the fixed version. If your PDF has images, you can write alt text right in the browser -- or let AI do a first draft.
 
-The web UI also has an "AI generate" button -- set your Gemini API key in the settings panel (or use Ollama if you have it installed).
-
-**Option C: AI-assisted (fastest)**
-
-Have AI draft descriptions, then you review and approve them. The easiest setup is **Google Gemini** -- it's free and works out of the box with just an API key:
-
-1. Go to [ai.google.dev](https://ai.google.dev) and sign in with your Google account
-2. Click "Get API key" and create one
-3. Set it as an environment variable: `export GOOGLE_API_KEY=AIza...`
-
-Then generate drafts:
-
-```bash
-# Generate drafts with Gemini (free, nothing to install)
-accesspdf generate-alt-text my-document_accessible.pdf --provider gemini
-
-# Then review and approve/edit the drafts
-accesspdf review my-document_accessible.pdf
-```
-
-**Prefer to run AI locally?** You can use Ollama instead -- see [AI providers](#ai-providers-for-alt-text) below.
-
-AI drafts are **never** injected automatically. They show up as suggestions that you approve, edit, or reject.
-
-### Step 4: Inject the approved descriptions
-
-Once you've written and approved all image descriptions, re-run `fix` with the sidecar file:
-
-```bash
-accesspdf fix my-document.pdf -o my-document_accessible.pdf --alt-text my-document.alttext.yaml
-```
-
-### Step 5: Verify
-
-Run `check` again on the output to confirm everything is fixed:
-
-```bash
-accesspdf check my-document_accessible.pdf
-```
-
-## Processing many PDFs at once
-
-Fix every PDF in a folder:
-
-```bash
-accesspdf batch ./papers/ -o ./papers/accessible/
-```
-
-This processes all PDFs and puts the fixed versions in the output directory. Add `-r` to include subdirectories.
-
-If you have sidecar files with approved alt text ready:
-
-```bash
-accesspdf batch ./papers/ -o ./papers/accessible/ --alt-text-dir ./papers/
-```
-
-## AI providers for alt text
-
-AccessPDF can use AI vision models to draft image descriptions. You still review everything before it gets injected.
-
-| Provider | Extra install? | API key needed? | Cost |
-|----------|---------------|-----------------|------|
-| **Gemini** (recommended) | No | `GOOGLE_API_KEY` | Free tier |
-| Ollama | Yes (local app) | No | Free (runs on your machine) |
-| Anthropic (Claude) | `pip install accesspdf[anthropic]` | `ANTHROPIC_API_KEY` | Paid |
-| OpenAI (GPT-4) | `pip install accesspdf[openai]` | `OPENAI_API_KEY` | Paid |
-
-**Gemini is the easiest to get started with** -- it's free, works out of the box, and only needs an API key from [ai.google.dev](https://ai.google.dev).
-
-**Ollama** is for people who want everything running locally with no cloud calls. Install it from [ollama.com](https://ollama.com), then pull a vision model:
+For AI-generated alt text, we recommend **[Ollama](https://ollama.com)** -- it's free, runs locally, and needs no API key. Install it, then:
 
 ```bash
 ollama pull llava
 ```
 
-For any provider, set your API key as an environment variable or pass it directly:
+That's it. Select "Ollama" in the web UI and click generate.
+
+---
+
+## How it works
+
+AccessPDF does two things:
+
+1. **Fixes structure automatically** -- tags, language, reading order, headings, tables, links, bookmarks
+2. **Helps you add image descriptions** -- the one part that needs a human (or AI + human review)
+
+Your original PDF is never modified. Output always goes to a new file.
+
+## CLI workflow
+
+If you prefer the command line over the web UI:
 
 ```bash
-# Gemini (free)
-export GOOGLE_API_KEY=AIza...
-accesspdf generate-alt-text my-document_accessible.pdf --provider gemini
+# 1. See what's wrong (read-only, never touches your file)
+accesspdf check my-document.pdf
 
-# Or pass the key directly
-accesspdf generate-alt-text my-document_accessible.pdf --provider gemini --api-key AIza...
+# 2. Fix structural issues
+accesspdf fix my-document.pdf -o my-document_accessible.pdf
 
-# Cloud providers work the same way
-accesspdf generate-alt-text my-document_accessible.pdf --provider anthropic --api-key sk-ant-...
+# 3. Generate AI alt text drafts (optional)
+accesspdf generate-alt-text my-document_accessible.pdf
+
+# 4. Review and approve the drafts
+accesspdf review my-document_accessible.pdf
+
+# 5. Re-run fix to inject approved descriptions
+accesspdf fix my-document.pdf -o my-document_accessible.pdf --alt-text my-document.alttext.yaml
 ```
 
-In the web UI, you can paste your API key right in the settings panel -- it's sent per-request and never saved to disk.
+## AI alt text providers
 
-Check which providers are available on your system:
+AccessPDF uses AI vision models to draft image descriptions. You always review before anything gets injected.
+
+| Provider | Setup | API key? | Cost |
+|----------|-------|----------|------|
+| **Ollama** (recommended) | [Install Ollama](https://ollama.com), `ollama pull llava` | No | Free (local) |
+| Google Gemini | None | `GOOGLE_API_KEY` | Free tier |
+| Anthropic (Claude) | `pip install accesspdf[anthropic]` | `ANTHROPIC_API_KEY` | Paid |
+| OpenAI (GPT-4) | `pip install accesspdf[openai]` | `OPENAI_API_KEY` | Paid |
+
+**Ollama is the easiest** -- no API key, no account, nothing leaves your machine. Just install it and pull a model.
+
+For cloud providers, set your key as an environment variable or pass it directly:
 
 ```bash
-accesspdf providers
+accesspdf generate-alt-text my-document.pdf --provider gemini --api-key AIza...
+```
+
+In the web UI, you can paste your API key in the settings panel -- it's sent per-request and never saved to disk.
+
+## Batch processing
+
+Fix every PDF in a folder:
+
+```bash
+accesspdf batch ./papers/ -o ./papers/accessible/
+accesspdf batch ./papers/ -o ./papers/accessible/ -r   # include subdirectories
 ```
 
 ## The sidecar file
 
-Image descriptions are stored in a `.alttext.yaml` file next to your PDF. It looks like this:
+Image descriptions live in a `.alttext.yaml` file next to your PDF:
 
 ```yaml
-document: my-document.pdf
 images:
 - id: img_37044c
   page: 1
-  hash: 37044c64001bee1d5ade98da9c1de419
-  caption: ''
   ai_draft: 'Bar chart showing quarterly revenue from 2023-2025.'
   alt_text: 'Bar chart showing quarterly revenue. Q1 2025 is highest at $4.2M.'
   status: approved
-- id: img_8527c6
-  page: 3
-  hash: 8527c67235abd6fa37d6dba179b12ad7
-  caption: ''
-  ai_draft: ''
-  alt_text: ''
-  status: decorative
 ```
 
-Each image is identified by a hash of its content, so the sidecar stays valid even if you re-export the PDF. The `status` field controls what happens:
-
-- **needs_review** -- not yet described, won't be injected
-- **approved** -- the `alt_text` field gets injected into the PDF
-- **decorative** -- marked as an artifact so screen readers skip it
-
-You can edit this file by hand if you prefer.
-
-## What does "accessible PDF" mean?
-
-An accessible PDF has:
-
-- **Tags** -- a structure tree telling screen readers what's a heading, paragraph, table, image, etc.
-- **Language** -- so screen readers know how to pronounce the text
-- **Reading order** -- so content is read in the right sequence, not left-to-right across columns
-- **Alt text** -- descriptions of images for people who can't see them
-- **Table headers** -- so screen readers can say "Name: Alice" instead of just "Alice"
-- **Bookmarks** -- a navigation outline built from headings
-- **Sufficient contrast** -- text dark enough to read against its background
-
-AccessPDF checks for all of these and fixes everything it can automatically. Image descriptions are the one thing that requires human judgment.
+Statuses: **needs_review** (not yet described), **approved** (gets injected), **decorative** (screen readers skip it). You can edit this file by hand.
 
 ## CLI reference
 
 ```
-accesspdf check <pdf>                    # Analyze for issues (read-only)
+accesspdf check <pdf>                    # Analyze accessibility (read-only)
 accesspdf fix <pdf> -o <output>          # Fix structure + inject alt text
-accesspdf fix <pdf> --alt-text <yaml>    # Fix and inject from sidecar
+accesspdf fix <pdf> --alt-text <yaml>    # Fix with sidecar descriptions
 accesspdf batch <dir> -o <outdir>        # Fix all PDFs in a directory
-accesspdf batch <dir> -r                 # Include subdirectories
 accesspdf review <pdf>                   # Terminal UI for alt text
 accesspdf serve                          # Web UI at localhost:8080
-accesspdf serve -p 3000                  # Web UI on a different port
 accesspdf generate-alt-text <pdf>        # AI drafts (Ollama default)
-accesspdf generate-alt-text <pdf> -p anthropic  # Use Claude
 accesspdf providers                      # Show available AI providers
-accesspdf --version                      # Print version
+```
+
+## Installation options
+
+```bash
+pip install accesspdf          # CLI only
+pip install "accesspdf[web]"   # CLI + browser UI (recommended)
+pip install "accesspdf[anthropic]"  # Add Claude provider
+pip install "accesspdf[openai]"     # Add GPT-4 provider
 ```
 
 ## Contributing
@@ -266,8 +128,6 @@ cd accesspdf
 pip install -e ".[dev]"
 python -m pytest tests/ -v
 ```
-
-152 tests. No real API calls in the test suite.
 
 ## License
 
