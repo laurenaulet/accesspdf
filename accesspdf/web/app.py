@@ -18,6 +18,13 @@ from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from accesspdf.alttext.sidecar import SidecarFile, SidecarManager
 from accesspdf.models import AltTextStatus
 
+def _clean_title(name: str) -> str:
+    """Return *name* only if it looks like a real document title, not a filename."""
+    if name.lower().endswith(".pdf"):
+        return ""
+    return name
+
+
 # ── In-memory job storage ───────────────────────────────────────────────────
 
 _MAX_JOB_AGE_SECONDS = 3600  # 1 hour
@@ -173,7 +180,7 @@ def _generate_alt_text(job: _Job, provider: object, pending_entries: list,
                     page=entry.page,
                     caption=entry.caption,
                     surrounding_text=entry.context,
-                    document_title=job.sidecar.document,
+                    document_title=_clean_title(job.sidecar.document),
                     document_context=document_context,
                 )
 

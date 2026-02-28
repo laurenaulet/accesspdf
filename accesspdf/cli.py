@@ -11,6 +11,13 @@ from rich.table import Table
 
 from accesspdf import __version__
 
+def _clean_title(name: str) -> str:
+    """Return *name* only if it looks like a real document title, not a filename."""
+    if name.lower().endswith(".pdf"):
+        return ""
+    return name
+
+
 app = typer.Typer(
     name="accesspdf",
     help="PDF accessibility remediation tool.",
@@ -375,7 +382,7 @@ def generate_alt_text(
                         page=entry.page,
                         caption=entry.caption,
                         surrounding_text=entry.context,
-                        document_title=sidecar.document,
+                        document_title=_clean_title(sidecar.document),
                         document_context=doc_context or "",
                     )
 
