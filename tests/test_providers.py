@@ -154,6 +154,121 @@ class TestOllamaProvider:
 
             assert asyncio.run(provider.is_available()) is False
 
+    def test_document_context_in_prompt(self) -> None:
+        """Document context must appear in the prompt sent to the LLM."""
+        provider = OllamaProvider()
+        context = ImageContext(
+            image_bytes=b"\x89PNG\r\n",
+            document_context="This is a chemistry textbook about organic reactions",
+        )
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"response": "A diagram.", "total_duration": 100}
+
+        with patch("httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.post = AsyncMock(return_value=mock_response)
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_client_cls.return_value = mock_client
+
+            asyncio.run(provider.generate(context))
+
+            # Grab the prompt that was actually sent
+            call_args = mock_client.post.call_args
+            payload = call_args.kwargs.get("json") or call_args[1].get("json")
+            prompt = payload["prompt"]
+
+            assert "chemistry textbook about organic reactions" in prompt
+
+    def test_per_image_context_in_prompt(self) -> None:
+        """Per-image context (surrounding_text) must appear in the prompt."""
+        provider = OllamaProvider()
+        context = ImageContext(
+            image_bytes=b"\x89PNG\r\n",
+            surrounding_text="Diagram of a benzene ring",
+        )
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"response": "A ring.", "total_duration": 100}
+
+        with patch("httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.post = AsyncMock(return_value=mock_response)
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_client_cls.return_value = mock_client
+
+            asyncio.run(provider.generate(context))
+
+            call_args = mock_client.post.call_args
+            payload = call_args.kwargs.get("json") or call_args[1].get("json")
+            prompt = payload["prompt"]
+
+            assert "Diagram of a benzene ring" in prompt
+
+    def test_document_title_in_prompt(self) -> None:
+        """Real document title must appear in the prompt."""
+        provider = OllamaProvider()
+        context = ImageContext(
+            image_bytes=b"\x89PNG\r\n",
+            document_title="Introduction to Organic Chemistry",
+        )
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"response": "A molecule.", "total_duration": 100}
+
+        with patch("httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.post = AsyncMock(return_value=mock_response)
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_client_cls.return_value = mock_client
+
+            asyncio.run(provider.generate(context))
+
+            call_args = mock_client.post.call_args
+            payload = call_args.kwargs.get("json") or call_args[1].get("json")
+            prompt = payload["prompt"]
+
+            assert "Introduction to Organic Chemistry" in prompt
+
+    def test_empty_context_not_in_prompt(self) -> None:
+        """Empty context fields should NOT add anything to the prompt."""
+        provider = OllamaProvider()
+        context = ImageContext(
+            image_bytes=b"\x89PNG\r\n",
+            document_context="",
+            surrounding_text="",
+            document_title="",
+            caption="",
+        )
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"response": "An image.", "total_duration": 100}
+
+        with patch("httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.post = AsyncMock(return_value=mock_response)
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_client_cls.return_value = mock_client
+
+            asyncio.run(provider.generate(context))
+
+            call_args = mock_client.post.call_args
+            payload = call_args.kwargs.get("json") or call_args[1].get("json")
+            prompt = payload["prompt"]
+
+            assert "Document context" not in prompt
+            assert "Surrounding text" not in prompt
+            assert "Document title" not in prompt
+            assert "caption" not in prompt
+
 
 # ── Cloud provider import tests ─────────────────────────────────────────────
 
