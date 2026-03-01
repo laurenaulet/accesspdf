@@ -43,7 +43,8 @@ class _Job:
 
     __slots__ = ("job_id", "work_dir", "input_path", "output_path", "sidecar",
                  "sidecar_path", "created_at", "error", "analysis", "stage",
-                 "gen_stage", "gen_current", "gen_total", "gen_errors")
+                 "gen_stage", "gen_current", "gen_total", "gen_errors",
+                 "sidecar_lock")
 
     def __init__(self, job_id: str, work_dir: Path) -> None:
         self.job_id = job_id
@@ -61,6 +62,8 @@ class _Job:
         self.gen_current: int = 0
         self.gen_total: int = 0
         self.gen_errors: list[dict] = []
+        # Lock to protect concurrent sidecar reads/writes
+        self.sidecar_lock = threading.Lock()
 
 
 _jobs: dict[str, _Job] = {}
@@ -188,7 +191,8 @@ def _generate_alt_text(job: _Job, provider: object, pending_entries: list,
                     result = await provider.generate(context)
 
                 if result.alt_text:
-                    entry.ai_draft = result.alt_text
+                    with job.sidecar_lock:
+                        entry.ai_draft = result.alt_text
                 elif result.error:
                     job.gen_errors.append({"image_id": entry.id, "error": result.error})
             except Exception as exc:
@@ -201,7 +205,8 @@ def _generate_alt_text(job: _Job, provider: object, pending_entries: list,
 
         # Save sidecar
         if job.sidecar_path:
-            SidecarManager.save(job.sidecar, job.sidecar_path)
+            with job.sidecar_lock:
+                SidecarManager.save(job.sidecar, job.sidecar_path)
 
         job.gen_stage = "done"
 
@@ -245,31 +250,35 @@ def _get_batch(batch_id: str) -> _BatchJob:
 
 def _process_batch(batch: _BatchJob) -> None:
     """Process all files in a batch sequentially in a background thread."""
-    from accesspdf.analyzer import PDFAnalyzer
-    from accesspdf.pipeline import run_pipeline
+    try:
+        from accesspdf.analyzer import PDFAnalyzer
+        from accesspdf.pipeline import run_pipeline
 
-    batch.stage = STAGE_FIXING
-    analyzer = PDFAnalyzer()
+        batch.stage = STAGE_FIXING
+        analyzer = PDFAnalyzer()
 
-    for i, file_info in enumerate(batch.files):
-        batch.current_index = i
-        file_info["status"] = "fixing"
+        for i, file_info in enumerate(batch.files):
+            batch.current_index = i
+            file_info["status"] = "fixing"
 
-        try:
-            # Check if scanned before processing
             try:
-                analysis = analyzer.analyze(file_info["input_path"])
-                file_info["is_scanned"] = analysis.is_scanned
-            except Exception:
-                file_info["is_scanned"] = False
+                # Check if scanned before processing
+                try:
+                    analysis = analyzer.analyze(file_info["input_path"])
+                    file_info["is_scanned"] = analysis.is_scanned
+                except Exception:
+                    file_info["is_scanned"] = False
 
-            run_pipeline(file_info["input_path"], file_info["output_path"])
-            file_info["status"] = "done"
-        except Exception as exc:
-            file_info["status"] = "error"
-            file_info["error"] = str(exc)
+                run_pipeline(file_info["input_path"], file_info["output_path"])
+                file_info["status"] = "done"
+            except Exception as exc:
+                file_info["status"] = "error"
+                file_info["error"] = str(exc)
 
-    batch.stage = STAGE_DONE
+        batch.stage = STAGE_DONE
+    except Exception as exc:
+        batch.error = str(exc)
+        batch.stage = STAGE_ERROR
 
 
 # ── FastAPI app ─────────────────────────────────────────────────────────────
@@ -346,20 +355,21 @@ def create_app() -> FastAPI:
         if job.sidecar is None:
             raise HTTPException(status_code=400, detail="No sidecar for this job.")
 
-        for update in updates:
-            entry = job.sidecar.get_entry(update["image_hash"])
-            if entry is None:
-                continue
-            if "alt_text" in update:
-                entry.alt_text = update["alt_text"]
-            if "context" in update:
-                entry.context = update["context"]
-            if "status" in update:
-                entry.status = AltTextStatus(update["status"])
+        with job.sidecar_lock:
+            for update in updates:
+                entry = job.sidecar.get_entry(update["image_hash"])
+                if entry is None:
+                    continue
+                if "alt_text" in update:
+                    entry.alt_text = update["alt_text"]
+                if "context" in update:
+                    entry.context = update["context"]
+                if "status" in update:
+                    entry.status = AltTextStatus(update["status"])
 
-        # Save to disk
-        if job.sidecar_path:
-            SidecarManager.save(job.sidecar, job.sidecar_path)
+            # Save to disk
+            if job.sidecar_path:
+                SidecarManager.save(job.sidecar, job.sidecar_path)
 
         return {"saved": len(updates)}
 

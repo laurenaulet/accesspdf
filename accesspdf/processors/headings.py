@@ -72,25 +72,40 @@ class HeadingsProcessor:
             try:
                 ops = pikepdf.parse_content_stream(page)
                 current_font = ""
-                current_size = 0.0
+                raw_font_size = 0.0
+                tm_scale = 1.0  # vertical scale from text matrix (Tm)
 
                 for operands, operator in ops:
-                    # Track font changes: Tf operator sets font
+                    # Track font changes: Tf operator sets font and raw size
                     if operator == pikepdf.Operator("Tf") and len(operands) >= 2:
                         current_font = str(operands[0])
                         try:
-                            current_size = float(operands[1])
+                            raw_font_size = float(operands[1])
                         except (ValueError, TypeError):
-                            current_size = 12.0
+                            raw_font_size = 12.0
 
-                    # Text showing operators
+                    # Track text matrix: Tm sets [a b c d e f]
+                    # Vertical scale factor is d (index 3)
+                    elif operator == pikepdf.Operator("Tm") and len(operands) >= 6:
+                        try:
+                            tm_scale = abs(float(operands[3]))
+                            if tm_scale == 0:
+                                tm_scale = 1.0
+                        except (ValueError, TypeError):
+                            tm_scale = 1.0
+
+                    # BT resets text matrix to identity
+                    elif operator == pikepdf.Operator("BT"):
+                        tm_scale = 1.0
+
+                    # Text showing operators — effective size = raw * tm_scale
                     elif operator == pikepdf.Operator("Tj") and operands:
                         text = str(operands[0]).strip()
                         if text:
                             blocks.append({
                                 "text": text,
                                 "font": current_font,
-                                "size": current_size,
+                                "size": raw_font_size * tm_scale,
                                 "bold": is_bold_font(current_font),
                                 "page": page_idx,
                             })
@@ -104,7 +119,7 @@ class HeadingsProcessor:
                             blocks.append({
                                 "text": text,
                                 "font": current_font,
-                                "size": current_size,
+                                "size": raw_font_size * tm_scale,
                                 "bold": is_bold_font(current_font),
                                 "page": page_idx,
                             })
@@ -176,9 +191,24 @@ class HeadingsProcessor:
             if not text:
                 continue
 
-            # Check each heading text for a match
+            # Check each heading text for a match (normalized comparison)
+            text_norm = " ".join(text.split()).lower()
             for heading_text, level in heading_map.items():
-                if heading_text in text or text in heading_text:
+                heading_norm = " ".join(heading_text.split()).lower()
+                if not text_norm or not heading_norm:
+                    continue
+                # Require exact match or that one starts with the other
+                # (to handle minor extraction differences), but only if
+                # the shorter string is at least 4 chars to avoid false matches
+                if text_norm == heading_norm:
+                    elem["/S"] = pikepdf.Name(f"/H{level}")
+                    changes += 1
+                    break
+                shorter = min(len(text_norm), len(heading_norm))
+                if shorter >= 4 and (
+                    text_norm.startswith(heading_norm)
+                    or heading_norm.startswith(text_norm)
+                ):
                     elem["/S"] = pikepdf.Name(f"/H{level}")
                     changes += 1
                     break

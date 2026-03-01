@@ -60,7 +60,7 @@ class ReadingOrderProcessor:
                 continue
 
             page_idx = self._get_page_index(kid, pdf)
-            y_pos, x_pos = self._get_position(kid)
+            y_pos, x_pos = self._get_position(kid, pdf)
             sortable.append((page_idx, -y_pos, x_pos, idx, kid))
 
         # Sort by page, then top-to-bottom (negate y for descending), then left-to-right
@@ -96,22 +96,81 @@ class ReadingOrderProcessor:
                 return idx
         return 0
 
-    def _get_position(self, elem: pikepdf.Dictionary) -> tuple[float, float]:
-        """Get approximate (y, x) position from a structure element's MCID.
+    def _get_position(
+        self, elem: pikepdf.Dictionary, pdf: pikepdf.Pdf
+    ) -> tuple[float, float]:
+        """Get approximate (y, x) position of a structure element's text.
 
+        Scans the page content stream to find the text matrix (Tm) or
+        text position (Td/TD) active when the element's MCID is rendered.
         Returns (y_position, x_position) in page coordinates.
-        For now, uses the MCID as a proxy for order (lower MCID = earlier in stream).
+        Falls back to MCID-based ordering if position can't be determined.
         """
-        if "/K" not in elem:
+        if "/K" not in elem or "/Pg" not in elem:
             return (0.0, 0.0)
 
         kids = elem["/K"]
+        mcid: int | None = None
         if isinstance(kids, pikepdf.Array):
             for kid in kids:
-                if isinstance(kid, int):
-                    # MCID — use as order proxy (content stream order)
-                    return (float(-kid), 0.0)
-        elif isinstance(kids, int):
-            return (float(-int(kids)), 0.0)
+                try:
+                    mcid = int(kid)
+                    break
+                except (TypeError, ValueError):
+                    pass
+        else:
+            try:
+                mcid = int(kids)
+            except (TypeError, ValueError):
+                pass
 
-        return (0.0, 0.0)
+        if mcid is None:
+            return (0.0, 0.0)
+
+        # Scan the page's content stream to find position at this MCID
+        page_ref = elem["/Pg"]
+        try:
+            ops = pikepdf.parse_content_stream(page_ref)
+        except Exception:
+            return (float(-mcid), 0.0)  # fallback to MCID order
+
+        # Track text position state
+        tx, ty = 0.0, 0.0
+        in_target_mcid = False
+
+        for operands, operator in ops:
+            op = str(operator)
+            if op == "BDC" and len(operands) >= 2:
+                props = operands[1]
+                if isinstance(props, pikepdf.Dictionary) and "/MCID" in props:
+                    try:
+                        if int(props["/MCID"]) == mcid:
+                            in_target_mcid = True
+                    except (TypeError, ValueError):
+                        pass
+            elif op == "EMC":
+                if in_target_mcid:
+                    break  # found our position
+                in_target_mcid = False
+            elif op == "Tm" and len(operands) >= 6:
+                try:
+                    tx = float(operands[4])
+                    ty = float(operands[5])
+                except (ValueError, TypeError):
+                    pass
+            elif op in ("Td", "TD") and len(operands) >= 2:
+                try:
+                    tx += float(operands[0])
+                    ty += float(operands[1])
+                except (ValueError, TypeError):
+                    pass
+            elif op == "BT":
+                tx, ty = 0.0, 0.0
+
+            if in_target_mcid and ty != 0.0:
+                break  # got position inside our target MCID
+
+        if ty == 0.0 and tx == 0.0:
+            return (float(-mcid), 0.0)  # fallback to MCID order
+
+        return (ty, tx)

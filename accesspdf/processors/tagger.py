@@ -180,7 +180,112 @@ class TaggerProcessor:
             except Exception:
                 logger.debug("Could not rewrite content stream for page %d", page_idx)
 
+        # Rebuild the ParentTree to include the new Figure elements
+        if count > 0:
+            self._rebuild_parent_tree(pdf)
+
         return count
+
+    def _rebuild_parent_tree(self, pdf: pikepdf.Pdf) -> None:
+        """Merge new structure elements into the existing ParentTree."""
+        struct_root = pdf.Root.get("/StructTreeRoot")
+        if struct_root is None:
+            return
+
+        doc_elem = None
+        if "/K" in struct_root:
+            kids = struct_root["/K"]
+            if isinstance(kids, pikepdf.Array) and len(kids) > 0:
+                doc_elem = kids[0]
+            elif isinstance(kids, pikepdf.Dictionary):
+                doc_elem = kids
+        if doc_elem is None:
+            return
+
+        parent_tree = struct_root.get("/ParentTree")
+        if parent_tree is None:
+            parent_tree = pdf.make_indirect(pikepdf.Dictionary({
+                "/Nums": pikepdf.Array(),
+            }))
+            struct_root["/ParentTree"] = parent_tree
+
+        # Read existing entries
+        existing_nums = parent_tree.get("/Nums")
+        page_arrays: dict[int, list] = {}
+        if existing_nums and isinstance(existing_nums, pikepdf.Array):
+            i = 0
+            while i + 1 < len(existing_nums):
+                try:
+                    pg_idx = int(existing_nums[i])
+                    arr_obj = existing_nums[i + 1]
+                    if hasattr(arr_obj, "resolve"):
+                        arr_obj = arr_obj.resolve()
+                    if isinstance(arr_obj, pikepdf.Array):
+                        page_arrays[pg_idx] = list(arr_obj)
+                except Exception:
+                    pass
+                i += 2
+
+        if "/K" not in doc_elem:
+            return
+
+        all_kids = doc_elem["/K"]
+        if not isinstance(all_kids, pikepdf.Array):
+            all_kids = pikepdf.Array([all_kids])
+
+        for kid in all_kids:
+            if not isinstance(kid, pikepdf.Dictionary):
+                continue
+            if "/Pg" not in kid or "/K" not in kid:
+                continue
+
+            k_val = kid["/K"]
+            mcids: list[int] = []
+            if isinstance(k_val, pikepdf.Array):
+                for item in k_val:
+                    try:
+                        mcids.append(int(item))
+                    except (TypeError, ValueError):
+                        pass
+            else:
+                try:
+                    mcids.append(int(k_val))
+                except (TypeError, ValueError):
+                    pass
+
+            if not mcids:
+                continue
+
+            page_ref = kid["/Pg"]
+            for idx, pg in enumerate(pdf.pages):
+                pg_obj = pg.obj if hasattr(pg, "obj") else pg
+                try:
+                    if pg_obj.objgen == page_ref.objgen:
+                        if idx not in page_arrays:
+                            page_arrays[idx] = []
+                        arr = page_arrays[idx]
+                        for m in mcids:
+                            while len(arr) <= m:
+                                arr.append(None)
+                            if arr[m] is None:
+                                arr[m] = kid
+                        break
+                except Exception:
+                    pass
+
+        nums = pikepdf.Array()
+        for page_idx in sorted(page_arrays.keys()):
+            arr = page_arrays[page_idx]
+            pdf_arr = pikepdf.Array()
+            for elem in arr:
+                if elem is None:
+                    pdf_arr.append(pikepdf.Null())
+                else:
+                    pdf_arr.append(elem)
+            nums.append(page_idx)
+            nums.append(pdf.make_indirect(pdf_arr))
+
+        parent_tree["/Nums"] = nums
 
     def _is_already_tagged(self, pdf: pikepdf.Pdf) -> bool:
         """Check if the PDF already has a populated tag tree."""

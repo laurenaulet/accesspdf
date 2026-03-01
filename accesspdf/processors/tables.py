@@ -114,7 +114,15 @@ class TablesProcessor:
             add_kid(doc_elem, table_elem)
             changes += 1
 
-        return ProcessorResult(processor_name=self.name, changes_made=changes)
+        warnings = []
+        if changes > 0:
+            warnings.append(
+                f"Detected {changes} table(s) with structural tags only. "
+                "Cell content is not linked -- manual review recommended."
+            )
+        return ProcessorResult(
+            processor_name=self.name, changes_made=changes, warnings=warnings
+        )
 
     def _detect_tables_from_streams(self, pdf: pikepdf.Pdf) -> list[TableGrid]:
         """Detect table grids from line-drawing operators in content streams."""

@@ -276,7 +276,13 @@ def _get_next_mcid(page: pikepdf.Object) -> int:
 
 
 def _rebuild_parent_tree(pdf: pikepdf.Pdf) -> None:
-    """Rebuild the ParentTree to include all structure elements."""
+    """Merge new structure elements into the existing ParentTree.
+
+    Instead of rebuilding from scratch (which would destroy existing /P
+    paragraph mappings), this reads the current ParentTree, then walks the
+    document element's children to find any structure elements whose MCIDs
+    are not yet represented, and inserts them into the correct slots.
+    """
     struct_root = pdf.Root["/StructTreeRoot"]
 
     doc_elem = None
@@ -289,17 +295,40 @@ def _rebuild_parent_tree(pdf: pikepdf.Pdf) -> None:
     if doc_elem is None:
         return
 
+    # ── 1. Read existing ParentTree into a mutable dict ──────────────
+    parent_tree = struct_root.get("/ParentTree")
+    if parent_tree is None:
+        parent_tree = pdf.make_indirect(pikepdf.Dictionary({
+            "/Nums": pikepdf.Array(),
+        }))
+        struct_root["/ParentTree"] = parent_tree
+
+    existing_nums = parent_tree.get("/Nums")
+    # Parse existing /Nums into {page_idx: list[elem_or_null]}
+    page_arrays: dict[int, list] = {}
+    if existing_nums and isinstance(existing_nums, pikepdf.Array):
+        i = 0
+        while i + 1 < len(existing_nums):
+            try:
+                pg_idx = int(existing_nums[i])
+                arr_obj = existing_nums[i + 1]
+                if hasattr(arr_obj, "resolve"):
+                    arr_obj = arr_obj.resolve()
+                if isinstance(arr_obj, pikepdf.Array):
+                    page_arrays[pg_idx] = list(arr_obj)
+            except Exception:
+                pass
+            i += 2
+
+    # ── 2. Walk doc_elem children and merge new entries ──────────────
     if "/K" not in doc_elem:
         return
 
-    kids = doc_elem["/K"]
-    if not isinstance(kids, pikepdf.Array):
-        kids = pikepdf.Array([kids])
+    all_kids = doc_elem["/K"]
+    if not isinstance(all_kids, pikepdf.Array):
+        all_kids = pikepdf.Array([all_kids])
 
-    # Group struct elements by page index -> list of (mcid, elem)
-    page_map: dict[int, list[tuple[int, pikepdf.Object]]] = {}
-
-    for kid in kids:
+    for kid in all_kids:
         if not isinstance(kid, pikepdf.Dictionary):
             continue
         if "/Pg" not in kid or "/K" not in kid:
@@ -327,30 +356,32 @@ def _rebuild_parent_tree(pdf: pikepdf.Pdf) -> None:
             pg_obj = pg.obj if hasattr(pg, "obj") else pg
             try:
                 if pg_obj.objgen == page_ref.objgen:
-                    if idx not in page_map:
-                        page_map[idx] = []
+                    if idx not in page_arrays:
+                        page_arrays[idx] = []
+                    arr = page_arrays[idx]
                     for m in mcids:
-                        page_map[idx].append((m, kid))
+                        # Grow the array if needed
+                        while len(arr) <= m:
+                            arr.append(None)
+                        # Only fill empty slots -- don't overwrite existing entries
+                        if arr[m] is None:
+                            arr[m] = kid
                     break
             except Exception:
                 pass
 
-    parent_tree = struct_root.get("/ParentTree")
-    if parent_tree is None:
-        parent_tree = pdf.make_indirect(pikepdf.Dictionary({
-            "/Nums": pikepdf.Array(),
-        }))
-        struct_root["/ParentTree"] = parent_tree
-
+    # ── 3. Write back, using pikepdf.Null() for empty slots ──────────
     nums = pikepdf.Array()
-    for page_idx in sorted(page_map.keys()):
-        entries = page_map[page_idx]
-        max_mcid = max(m for m, _ in entries)
-        arr: list = [None] * (max_mcid + 1)
-        for m, elem in entries:
-            arr[m] = elem
+    for page_idx in sorted(page_arrays.keys()):
+        arr = page_arrays[page_idx]
+        pdf_arr = pikepdf.Array()
+        for elem in arr:
+            if elem is None:
+                pdf_arr.append(pikepdf.Null())
+            else:
+                pdf_arr.append(elem)
         nums.append(page_idx)
-        nums.append(pdf.make_indirect(pikepdf.Array(arr)))
+        nums.append(pdf.make_indirect(pdf_arr))
 
     parent_tree["/Nums"] = nums
 

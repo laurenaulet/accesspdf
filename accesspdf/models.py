@@ -118,6 +118,8 @@ class RemediationResult:
     def warnings(self) -> list[str]:
         out: list[str] = []
         for r in self.processor_results:
+            if not r.success and r.error:
+                out.append(f"[{r.processor_name}] ERROR: {r.error}")
             for w in r.warnings:
                 out.append(f"[{r.processor_name}] {w}")
         return out

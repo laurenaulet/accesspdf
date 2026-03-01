@@ -81,7 +81,12 @@ class AnthropicProvider:
                 }],
             )
 
-            alt_text = message.content[0].text.strip()
+            if not message.content:
+                return AltTextResult(error="Anthropic returned empty response")
+            first_block = message.content[0]
+            if not hasattr(first_block, "text"):
+                return AltTextResult(error="Unexpected response format from Anthropic")
+            alt_text = first_block.text.strip()
             usage = {}
             if message.usage:
                 usage = {

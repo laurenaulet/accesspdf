@@ -50,13 +50,27 @@ def run_pipeline(
     shutil.copy2(input_path, output_path)
 
     # Step 2: Run processors
-    with pikepdf.open(output_path, allow_overwriting_input=True) as pdf:
+    pdf = pikepdf.open(output_path, allow_overwriting_input=True)
+    try:
         for processor_cls in _PROCESSORS:
             proc = processor_cls()  # type: ignore[call-arg]
-            proc_result = _run_single_processor(proc, pdf)
-            result.processor_results.append(proc_result)
+            try:
+                proc_result = _run_single_processor(proc, pdf, output_path)
+                result.processor_results.append(proc_result)
+            except _ProcessorFailed as pf:
+                result.processor_results.append(
+                    ProcessorResult(
+                        processor_name=pf.name, success=False, error=pf.error
+                    )
+                )
+                # Reopen the clean pre-processor state so subsequent
+                # processors don't operate on a corrupted PDF.
+                pdf.close()
+                pdf = pikepdf.open(output_path, allow_overwriting_input=True)
 
         pdf.save(output_path)
+    finally:
+        pdf.close()
 
     # Step 3: Create/update sidecar with detected images
     _create_sidecar(output_path)
@@ -68,17 +82,34 @@ def run_pipeline(
     return result
 
 
-def _run_single_processor(proc: Processor, pdf: pikepdf.Pdf) -> ProcessorResult:
-    """Run a single processor, catching unexpected exceptions."""
+def _run_single_processor(
+    proc: Processor, pdf: pikepdf.Pdf, output_path: Path
+) -> ProcessorResult:
+    """Run a single processor, restoring PDF state on failure.
+
+    Saves the PDF to disk before running the processor so that if it
+    partially mutates the PDF and then crashes, we can reopen the clean
+    state rather than continuing with a corrupted in-memory PDF.
+    """
+    # Save clean state before this processor runs
+    pdf.save(output_path)
+
     try:
         return proc.process(pdf)
     except Exception as exc:
         logger.error("Processor %s failed: %s", proc.name, exc, exc_info=True)
-        return ProcessorResult(
-            processor_name=proc.name,
-            success=False,
-            error=str(exc),
-        )
+        # Restore PDF to pre-processor state by reopening from the saved file.
+        # The caller must handle the reopened PDF object.
+        raise _ProcessorFailed(proc.name, str(exc)) from exc
+
+
+class _ProcessorFailed(Exception):
+    """Internal exception to signal a processor failure with rollback needed."""
+
+    def __init__(self, name: str, error: str) -> None:
+        self.name = name
+        self.error = error
+        super().__init__(f"Processor {name} failed: {error}")
 
 
 def _create_sidecar(output_path: Path) -> None:
