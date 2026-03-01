@@ -126,6 +126,15 @@
 
   .actions-bar { display: flex; gap: .75rem; margin-bottom: 1.5rem; flex-wrap: wrap; }
 
+  .bottom-download {
+    background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow);
+    padding: 1.25rem; margin-top: 1.5rem; text-align: center;
+  }
+  .bottom-download p {
+    color: var(--success); font-weight: 500; margin-bottom: .75rem; font-size: .95rem;
+  }
+  .bottom-download .btn { margin: 0 .375rem; }
+
   /* Image cards */
   .image-card {
     background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow);
@@ -422,6 +431,12 @@
     </div>
 
     <div id="image-list"></div>
+
+    <div id="bottom-download" class="bottom-download" style="display:none;">
+      <p>Your alt text will be included in the download.</p>
+      <button class="btn btn-primary" id="btn-save-bottom" disabled>Save alt text</button>
+      <button class="btn btn-success" id="btn-download-bottom" disabled>Download fixed PDF (with alt text)</button>
+    </div>
   </div>
 
   <footer>AccessPDF &mdash; open-source PDF accessibility tool</footer>
@@ -448,6 +463,9 @@
   const apiKeyInput = document.getElementById("api-key-input");
   const btnGenerate = document.getElementById("btn-generate");
   const aiPanel = document.getElementById("ai-panel");
+  const bottomDownload = document.getElementById("bottom-download");
+  const btnSaveBottom = document.getElementById("btn-save-bottom");
+  const btnDownloadBottom = document.getElementById("btn-download-bottom");
 
   const batchFileInput = document.getElementById("batch-file-input");
   const dropZoneText = document.getElementById("drop-zone-text");
@@ -684,6 +702,15 @@
 
     btnSave.disabled = imageData.length === 0;
     btnDownload.disabled = false;
+
+    // Show bottom download bar if there are images
+    if (imageData.length > 0) {
+      bottomDownload.style.display = "block";
+      btnSaveBottom.disabled = false;
+      btnDownloadBottom.disabled = false;
+    } else {
+      bottomDownload.style.display = "none";
+    }
   }
 
   function renderReport(analysis) {
@@ -1004,10 +1031,16 @@
       updateStats(data.stats);
 
       btnSave.textContent = "Saved!";
-      setTimeout(() => { btnSave.textContent = "Save alt text"; btnSave.disabled = false; }, 1500);
+      btnSaveBottom.textContent = "Saved!";
+      setTimeout(() => {
+        btnSave.textContent = "Save alt text"; btnSave.disabled = false;
+        btnSaveBottom.textContent = "Save alt text"; btnSaveBottom.disabled = false;
+      }, 1500);
     } catch (err) {
       btnSave.textContent = "Save alt text";
       btnSave.disabled = false;
+      btnSaveBottom.textContent = "Save alt text";
+      btnSaveBottom.disabled = false;
       alert("Save failed: " + err.message);
     }
   });
@@ -1015,6 +1048,8 @@
   btnDownload.addEventListener("click", async () => {
     btnDownload.disabled = true;
     btnDownload.textContent = "Preparing\u2026";
+    btnDownloadBottom.disabled = true;
+    btnDownloadBottom.textContent = "Preparing\u2026";
 
     try {
       await fetch(`/api/job/${currentJobId}/inject`, { method: "POST" });
@@ -1028,12 +1063,20 @@
 
       btnDownload.textContent = "Download fixed PDF";
       btnDownload.disabled = false;
+      btnDownloadBottom.textContent = "Download fixed PDF (with alt text)";
+      btnDownloadBottom.disabled = false;
     } catch (err) {
       btnDownload.textContent = "Download fixed PDF";
       btnDownload.disabled = false;
+      btnDownloadBottom.textContent = "Download fixed PDF (with alt text)";
+      btnDownloadBottom.disabled = false;
       alert("Download failed: " + err.message);
     }
   });
+
+  // Bottom bar buttons mirror the top ones
+  btnSaveBottom.addEventListener("click", () => btnSave.click());
+  btnDownloadBottom.addEventListener("click", () => btnDownload.click());
 
   // --- Batch upload & progress ---
   async function uploadBatch(files) {
