@@ -14,7 +14,7 @@ import pikepdf
 
 from accesspdf.models import ProcessorResult
 from accesspdf.pipeline import register_processor
-from accesspdf.processors._pdf_helpers import add_kid, make_struct_elem, walk_struct_tree
+from accesspdf.processors._pdf_helpers import add_kid, make_struct_elem, parse_content_stream_safe, walk_struct_tree
 
 logger = logging.getLogger(__name__)
 
@@ -132,9 +132,8 @@ class TablesProcessor:
             if "/Contents" not in page:
                 continue
 
-            try:
-                ops = pikepdf.parse_content_stream(page)
-            except Exception:
+            ops = parse_content_stream_safe(page, page_idx)
+            if ops is None:
                 continue
 
             h_lines: list[tuple[float, float, float, float]] = []

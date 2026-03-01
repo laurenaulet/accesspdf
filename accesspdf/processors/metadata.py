@@ -10,7 +10,7 @@ import pikepdf
 
 from accesspdf.models import ProcessorResult
 from accesspdf.pipeline import register_processor
-from accesspdf.processors._pdf_helpers import ensure_mark_info
+from accesspdf.processors._pdf_helpers import ensure_mark_info, parse_content_stream_safe
 
 logger = logging.getLogger(__name__)
 
@@ -126,17 +126,16 @@ class MetadataProcessor:
             for page in pdf.pages:
                 if "/Contents" not in page:
                     continue
-                try:
-                    ops = pikepdf.parse_content_stream(page)
-                    for operands, operator in ops:
-                        if operator == pikepdf.Operator("Tj") and operands:
-                            text += str(operands[0]) + " "
-                        elif operator == pikepdf.Operator("TJ") and operands:
-                            for item in operands[0]:
-                                if isinstance(item, (pikepdf.String, str)):
-                                    text += str(item) + " "
-                except Exception:
-                    pass
+                ops = parse_content_stream_safe(page)
+                if ops is None:
+                    continue
+                for operands, operator in ops:
+                    if operator == pikepdf.Operator("Tj") and operands:
+                        text += str(operands[0]) + " "
+                    elif operator == pikepdf.Operator("TJ") and operands:
+                        for item in operands[0]:
+                            if isinstance(item, (pikepdf.String, str)):
+                                text += str(item) + " "
 
             if len(text.strip()) < 20:
                 return "en-US"
@@ -166,7 +165,9 @@ class MetadataProcessor:
             for page in pdf.pages:
                 if "/Contents" not in page:
                     continue
-                ops = pikepdf.parse_content_stream(page)
+                ops = parse_content_stream_safe(page)
+                if ops is None:
+                    continue
                 for operands, operator in ops:
                     if operator == pikepdf.Operator("Tj") and operands:
                         text = str(operands[0]).strip()

@@ -2,7 +2,47 @@
 
 from __future__ import annotations
 
+import logging
+import threading
+
 import pikepdf
+
+logger = logging.getLogger(__name__)
+
+# Default timeout (seconds) for content stream parsing.
+_PARSE_TIMEOUT = 15
+
+
+def parse_content_stream_safe(
+    page: pikepdf.Dictionary,
+    page_idx: int = 0,
+    timeout: float = _PARSE_TIMEOUT,
+) -> list | None:
+    """Parse a page's content stream with a timeout.
+
+    Some PDFs have malformed content streams that cause pikepdf's C++ parser
+    to hang indefinitely.  This runs the parse in a daemon thread so the
+    pipeline is never blocked.
+
+    Returns the parsed ops list, or ``None`` if parsing failed or timed out.
+    """
+    result: list[list | None] = [None]
+
+    def _parse() -> None:
+        try:
+            result[0] = pikepdf.parse_content_stream(page)
+        except Exception:
+            result[0] = None
+
+    t = threading.Thread(target=_parse, daemon=True)
+    t.start()
+    t.join(timeout=timeout)
+    if t.is_alive():
+        logger.warning(
+            "Content stream parse timed out on page %d -- skipping", page_idx + 1
+        )
+        return None
+    return result[0]
 
 
 def ensure_struct_tree_root(pdf: pikepdf.Pdf) -> pikepdf.Dictionary:

@@ -8,7 +8,7 @@ import pikepdf
 
 from accesspdf.models import ProcessorResult
 from accesspdf.pipeline import register_processor
-from accesspdf.processors._pdf_helpers import walk_struct_tree
+from accesspdf.processors._pdf_helpers import parse_content_stream_safe, walk_struct_tree
 
 logger = logging.getLogger(__name__)
 
@@ -34,8 +34,11 @@ class BookmarksProcessor:
 
         struct_root = pdf.Root["/StructTreeRoot"]
 
+        # Pre-build MCID text cache (parse each page once)
+        mcid_text_cache = self._build_mcid_text_cache(pdf)
+
         # Collect headings from the tag tree
-        headings = self._collect_headings(struct_root, pdf)
+        headings = self._collect_headings(struct_root, pdf, mcid_text_cache)
         if not headings:
             return ProcessorResult(processor_name=self.name, changes_made=0)
 
@@ -50,8 +53,60 @@ class BookmarksProcessor:
             changes_made=len(headings),
         )
 
+    def _build_mcid_text_cache(
+        self, pdf: pikepdf.Pdf
+    ) -> dict[int, dict[int, str]]:
+        """Parse each page once and build {page_objgen_hash: {mcid: text}}."""
+        cache: dict[int, dict[int, str]] = {}
+
+        for page_idx, page in enumerate(pdf.pages):
+            if "/Contents" not in page:
+                continue
+
+            ops = parse_content_stream_safe(page, page_idx)
+            if ops is None:
+                continue
+
+            mcid_texts: dict[int, list[str]] = {}
+            current_mcid: int | None = None
+
+            for operands, operator in ops:
+                if operator == pikepdf.Operator("BDC") and len(operands) >= 2:
+                    if isinstance(operands[1], pikepdf.Dictionary):
+                        mid = operands[1].get("/MCID")
+                        if mid is not None:
+                            try:
+                                current_mcid = int(mid)
+                            except (TypeError, ValueError):
+                                current_mcid = None
+                elif operator == pikepdf.Operator("EMC"):
+                    current_mcid = None
+                elif current_mcid is not None:
+                    if operator == pikepdf.Operator("Tj") and operands:
+                        mcid_texts.setdefault(current_mcid, []).append(
+                            str(operands[0])
+                        )
+                    elif operator == pikepdf.Operator("TJ") and operands:
+                        for item in operands[0]:
+                            if isinstance(item, (pikepdf.String, str)):
+                                mcid_texts.setdefault(current_mcid, []).append(
+                                    str(item)
+                                )
+
+            page_obj = page.obj if hasattr(page, "obj") else page
+            key = hash(page_obj.objgen)
+            cache[key] = {
+                mcid: "".join(parts).strip()
+                for mcid, parts in mcid_texts.items()
+            }
+
+        return cache
+
     def _collect_headings(
-        self, struct_root: pikepdf.Dictionary, pdf: pikepdf.Pdf
+        self,
+        struct_root: pikepdf.Dictionary,
+        pdf: pikepdf.Pdf,
+        mcid_text_cache: dict[int, dict[int, str]],
     ) -> list[dict]:
         """Collect heading elements with their level, text, and page."""
         headings: list[dict] = []
@@ -65,7 +120,7 @@ class BookmarksProcessor:
                 continue
 
             level = int(tag[2:])
-            text = self._get_heading_text(elem, pdf)
+            text = self._get_heading_text_cached(elem, mcid_text_cache)
             page_num = self._get_page_number(elem, pdf)
 
             if text:
@@ -77,8 +132,12 @@ class BookmarksProcessor:
 
         return headings
 
-    def _get_heading_text(self, elem: pikepdf.Dictionary, pdf: pikepdf.Pdf) -> str:
-        """Extract text content from a heading structure element."""
+    def _get_heading_text_cached(
+        self,
+        elem: pikepdf.Dictionary,
+        mcid_text_cache: dict[int, dict[int, str]],
+    ) -> str:
+        """Look up text for a heading element from the pre-built cache."""
         if "/K" not in elem or "/Pg" not in elem:
             return ""
 
@@ -94,32 +153,18 @@ class BookmarksProcessor:
         if not mcids:
             return ""
 
-        page = elem["/Pg"]
-        try:
-            ops = pikepdf.parse_content_stream(page)
-        except Exception:
-            return ""
+        page_ref = elem["/Pg"]
+        page_obj = page_ref.obj if hasattr(page_ref, "obj") else page_ref
+        key = hash(page_obj.objgen)
+        page_cache = mcid_text_cache.get(key, {})
 
-        current_mcid: int | None = None
-        parts: list[str] = []
+        parts = []
+        for mcid in mcids:
+            text = page_cache.get(mcid, "")
+            if text:
+                parts.append(text)
 
-        for operands, operator in ops:
-            if operator == pikepdf.Operator("BDC") and len(operands) >= 2:
-                if isinstance(operands[1], pikepdf.Dictionary):
-                    mid = operands[1].get("/MCID")
-                    if mid is not None and int(mid) in mcids:
-                        current_mcid = int(mid)
-            elif operator == pikepdf.Operator("EMC"):
-                current_mcid = None
-            elif current_mcid is not None:
-                if operator == pikepdf.Operator("Tj") and operands:
-                    parts.append(str(operands[0]))
-                elif operator == pikepdf.Operator("TJ") and operands:
-                    for item in operands[0]:
-                        if isinstance(item, (pikepdf.String, str)):
-                            parts.append(str(item))
-
-        return "".join(parts).strip()
+        return " ".join(parts).strip()
 
     def _get_page_number(self, elem: pikepdf.Dictionary, pdf: pikepdf.Pdf) -> int:
         """Get the 0-based page index for a structure element."""

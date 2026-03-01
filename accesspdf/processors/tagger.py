@@ -20,6 +20,7 @@ from accesspdf.processors._pdf_helpers import (
     ensure_parent_tree,
     ensure_struct_tree_root,
     make_struct_elem,
+    parse_content_stream_safe,
 )
 
 logger = logging.getLogger(__name__)
@@ -59,8 +60,10 @@ class TaggerProcessor:
 
         total_mcids = 0
         parent_tree_nums = pikepdf.Array()
+        num_pages = len(pdf.pages)
 
         for page_idx, page in enumerate(pdf.pages):
+            logger.debug("Tagging page %d/%d", page_idx + 1, num_pages)
             mcids_on_page = self._tag_page(pdf, page, doc_elem, page_idx)
             total_mcids += mcids_on_page
 
@@ -114,9 +117,8 @@ class TaggerProcessor:
             if not image_names:
                 continue
 
-            try:
-                ops = pikepdf.parse_content_stream(page)
-            except Exception:
+            ops = parse_content_stream_safe(page, page_idx)
+            if ops is None:
                 continue
 
             # Find which image Do ops are already inside BDC/EMC
@@ -310,11 +312,9 @@ class TaggerProcessor:
         if "/Contents" not in page:
             return 0
 
-        # Parse the content stream
-        try:
-            ops = pikepdf.parse_content_stream(page)
-        except Exception:
-            logger.debug("Could not parse content stream for page %d", page_idx)
+        # Parse the content stream (with timeout for malformed pages)
+        ops = parse_content_stream_safe(page, page_idx)
+        if ops is None:
             return 0
 
         # Build set of image XObject names on this page

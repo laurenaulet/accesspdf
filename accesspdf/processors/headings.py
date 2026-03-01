@@ -10,7 +10,7 @@ import pikepdf
 
 from accesspdf.models import ProcessorResult
 from accesspdf.pipeline import register_processor
-from accesspdf.processors._pdf_helpers import walk_struct_tree
+from accesspdf.processors._pdf_helpers import parse_content_stream_safe, walk_struct_tree
 from accesspdf.processors._text_extract import TextBlock, is_bold_font
 
 logger = logging.getLogger(__name__)
@@ -50,9 +50,12 @@ class HeadingsProcessor:
         if not heading_map:
             return ProcessorResult(processor_name=self.name, changes_made=0)
 
+        # Pre-build MCID -> text cache (parse each page once)
+        mcid_text_cache = self._build_mcid_text_cache(pdf)
+
         # Walk the structure tree and promote /P to /Hx
         struct_root = pdf.Root["/StructTreeRoot"]
-        changes = self._promote_headings(struct_root, heading_map, pdf)
+        changes = self._promote_headings(struct_root, heading_map, pdf, mcid_text_cache)
 
         warnings = self._check_nesting(struct_root)
 
@@ -69,8 +72,8 @@ class HeadingsProcessor:
         for page_idx, page in enumerate(pdf.pages):
             if "/Contents" not in page:
                 continue
-            try:
-                ops = pikepdf.parse_content_stream(page)
+            ops = parse_content_stream_safe(page, page_idx)
+            if ops is not None:
                 current_font = ""
                 raw_font_size = 0.0
                 tm_scale = 1.0  # vertical scale from text matrix (Tm)
@@ -123,10 +126,61 @@ class HeadingsProcessor:
                                 "bold": is_bold_font(current_font),
                                 "page": page_idx,
                             })
-            except Exception:
-                logger.debug("Failed to parse content stream for page %d", page_idx)
 
         return blocks
+
+    def _build_mcid_text_cache(
+        self, pdf: pikepdf.Pdf
+    ) -> dict[int, dict[int, str]]:
+        """Parse each page once and build {page_objgen_hash: {mcid: text}}.
+
+        Uses page objgen as key so we can look up by page reference.
+        """
+        cache: dict[int, dict[int, str]] = {}
+
+        for page_idx, page in enumerate(pdf.pages):
+            if "/Contents" not in page:
+                continue
+
+            ops = parse_content_stream_safe(page, page_idx)
+            if ops is None:
+                continue
+
+            mcid_texts: dict[int, list[str]] = {}
+            current_mcid: int | None = None
+
+            for operands, operator in ops:
+                if operator == pikepdf.Operator("BDC") and len(operands) >= 2:
+                    if isinstance(operands[1], pikepdf.Dictionary):
+                        mid = operands[1].get("/MCID")
+                        if mid is not None:
+                            try:
+                                current_mcid = int(mid)
+                            except (TypeError, ValueError):
+                                current_mcid = None
+                elif operator == pikepdf.Operator("EMC"):
+                    current_mcid = None
+                elif current_mcid is not None:
+                    if operator == pikepdf.Operator("Tj") and operands:
+                        mcid_texts.setdefault(current_mcid, []).append(
+                            str(operands[0])
+                        )
+                    elif operator == pikepdf.Operator("TJ") and operands:
+                        for item in operands[0]:
+                            if isinstance(item, (pikepdf.String, str)):
+                                mcid_texts.setdefault(current_mcid, []).append(
+                                    str(item)
+                                )
+
+            # Convert to joined strings
+            page_obj = page.obj if hasattr(page, "obj") else page
+            key = hash(page_obj.objgen)
+            cache[key] = {
+                mcid: "".join(parts).strip()
+                for mcid, parts in mcid_texts.items()
+            }
+
+        return cache
 
     def _get_body_font_size(self, blocks: list[dict]) -> float | None:
         """Return the most common font size (the body text size)."""
@@ -174,6 +228,7 @@ class HeadingsProcessor:
         struct_root: pikepdf.Dictionary,
         heading_map: dict[str, int],
         pdf: pikepdf.Pdf,
+        mcid_text_cache: dict[int, dict[int, str]],
     ) -> int:
         """Walk the tag tree and change /P to /Hx for matching elements."""
         elements = walk_struct_tree(struct_root)
@@ -187,7 +242,7 @@ class HeadingsProcessor:
                 continue
 
             # Try to match this element's text content with heading_map
-            text = self._get_elem_text(elem, pdf)
+            text = self._get_elem_text_cached(elem, mcid_text_cache)
             if not text:
                 continue
 
@@ -215,8 +270,12 @@ class HeadingsProcessor:
 
         return changes
 
-    def _get_elem_text(self, elem: pikepdf.Dictionary, pdf: pikepdf.Pdf) -> str:
-        """Try to extract text content associated with a structure element."""
+    def _get_elem_text_cached(
+        self,
+        elem: pikepdf.Dictionary,
+        mcid_text_cache: dict[int, dict[int, str]],
+    ) -> str:
+        """Look up text for a structure element from the pre-built cache."""
         if "/K" not in elem or "/Pg" not in elem:
             return ""
 
@@ -232,33 +291,18 @@ class HeadingsProcessor:
         if not mcids:
             return ""
 
-        # Find the page and extract text from the MCID'd content
-        page = elem["/Pg"]
-        try:
-            ops = pikepdf.parse_content_stream(page)
-        except Exception:
-            return ""
+        page_ref = elem["/Pg"]
+        page_obj = page_ref.obj if hasattr(page_ref, "obj") else page_ref
+        key = hash(page_obj.objgen)
+        page_cache = mcid_text_cache.get(key, {})
 
-        current_mcid: int | None = None
-        text_parts: list[str] = []
+        parts = []
+        for mcid in mcids:
+            text = page_cache.get(mcid, "")
+            if text:
+                parts.append(text)
 
-        for operands, operator in ops:
-            if operator == pikepdf.Operator("BDC") and len(operands) >= 2:
-                if isinstance(operands[1], pikepdf.Dictionary):
-                    mid = operands[1].get("/MCID")
-                    if mid is not None and int(mid) in mcids:
-                        current_mcid = int(mid)
-            elif operator == pikepdf.Operator("EMC"):
-                current_mcid = None
-            elif current_mcid is not None:
-                if operator == pikepdf.Operator("Tj") and operands:
-                    text_parts.append(str(operands[0]))
-                elif operator == pikepdf.Operator("TJ") and operands:
-                    for item in operands[0]:
-                        if isinstance(item, (pikepdf.String, str)):
-                            text_parts.append(str(item))
-
-        return "".join(text_parts).strip()
+        return " ".join(parts).strip()
 
     def _check_nesting(self, struct_root: pikepdf.Dictionary) -> list[str]:
         """Check heading nesting and return warnings for violations."""

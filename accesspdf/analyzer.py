@@ -13,6 +13,8 @@ from pathlib import Path
 
 import pikepdf
 
+from accesspdf.processors._pdf_helpers import parse_content_stream_safe
+
 from accesspdf.models import (
     AccessibilityIssue,
     AnalysisResult,
@@ -281,9 +283,8 @@ class PDFAnalyzer:
 
     def _page_has_text(self, page: pikepdf.Page) -> bool:
         """Return True if the page's content stream has text-rendering operators."""
-        try:
-            ops = pikepdf.parse_content_stream(page)
-        except Exception:
+        ops = parse_content_stream_safe(page)
+        if ops is None:
             return False
         for _operands, operator in ops:
             if str(operator) in self._TEXT_OPERATORS:
@@ -353,9 +354,8 @@ class PDFAnalyzer:
 
     def _extract_text_colors(self, page: pikepdf.Page) -> list[tuple[int, int, int]]:
         """Parse content stream operators to find text fill colors."""
-        try:
-            ops = pikepdf.parse_content_stream(page)
-        except Exception:
+        ops = parse_content_stream_safe(page)
+        if ops is None:
             return []
 
         colors: list[tuple[int, int, int]] = []

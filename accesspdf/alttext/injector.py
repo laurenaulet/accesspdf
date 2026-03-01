@@ -10,7 +10,7 @@ import pikepdf
 
 from accesspdf.alttext.sidecar import SidecarFile
 from accesspdf.models import AltTextStatus
-from accesspdf.processors._pdf_helpers import add_kid, make_struct_elem
+from accesspdf.processors._pdf_helpers import add_kid, make_struct_elem, parse_content_stream_safe
 
 logger = logging.getLogger(__name__)
 
@@ -133,10 +133,8 @@ def _create_figure_tags(
         mcid = _get_next_mcid(page)
 
         # Parse content stream
-        try:
-            ops = pikepdf.parse_content_stream(page)
-        except Exception:
-            logger.debug("Could not parse content stream for page %d", page_idx)
+        ops = parse_content_stream_safe(page, page_idx)
+        if ops is None:
             continue
 
         # Wrap matching Do commands with BDC/EMC marked content
@@ -261,8 +259,8 @@ def _collect_form_image_hashes(form_xobj: pikepdf.Stream, hashes: list[str]) -> 
 def _get_next_mcid(page: pikepdf.Object) -> int:
     """Find the next available MCID on a page by scanning the content stream."""
     max_mcid = -1
-    try:
-        ops = pikepdf.parse_content_stream(page)
+    ops = parse_content_stream_safe(page)
+    if ops is not None:
         for operands, operator in ops:
             if operator == pikepdf.Operator("BDC") and len(operands) >= 2:
                 props = operands[1]
@@ -270,8 +268,6 @@ def _get_next_mcid(page: pikepdf.Object) -> int:
                     mcid_val = int(props["/MCID"])
                     if mcid_val > max_mcid:
                         max_mcid = mcid_val
-    except Exception:
-        pass
     return max_mcid + 1
 
 
