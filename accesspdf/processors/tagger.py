@@ -44,8 +44,10 @@ class TaggerProcessor:
         # Check if already properly tagged
         if self._is_already_tagged(pdf):
             # Even if already tagged, ensure every page has /Tabs /S
-            tabs_added = self._ensure_tabs(pdf)
-            return ProcessorResult(processor_name=self.name, changes_made=tabs_added)
+            changes = self._ensure_tabs(pdf)
+            # Also add /Figure tags for any untagged images
+            changes += self._tag_untagged_images(pdf)
+            return ProcessorResult(processor_name=self.name, changes_made=changes)
 
         struct_root = ensure_struct_tree_root(pdf)
         ensure_mark_info(pdf)
@@ -85,6 +87,101 @@ class TaggerProcessor:
                 count += 1
         return count
 
+    def _tag_untagged_images(self, pdf: pikepdf.Pdf) -> int:
+        """Add /Figure tags for images not already wrapped in BDC/EMC.
+
+        This handles PDFs that were tagged by an older version of the tool
+        (or another tool) that didn't create Figure tags for images.
+        """
+        struct_root = pdf.Root.get("/StructTreeRoot")
+        if struct_root is None:
+            return 0
+
+        # Find the /Document element to append Figure kids to
+        doc_elem = None
+        if "/K" in struct_root:
+            kids = struct_root["/K"]
+            if isinstance(kids, pikepdf.Array) and len(kids) > 0:
+                doc_elem = kids[0]
+            elif isinstance(kids, pikepdf.Dictionary):
+                doc_elem = kids
+        if doc_elem is None:
+            doc_elem = struct_root
+
+        count = 0
+        for page_idx, page in enumerate(pdf.pages):
+            image_names = self._get_image_xobj_names(page)
+            if not image_names:
+                continue
+
+            try:
+                ops = pikepdf.parse_content_stream(page)
+            except Exception:
+                continue
+
+            # Find which image Do ops are already inside BDC/EMC
+            already_tagged: set[str] = set()
+            bdc_depth = 0
+            for operands, operator in ops:
+                if operator == pikepdf.Operator("BDC"):
+                    bdc_depth += 1
+                elif operator == pikepdf.Operator("EMC"):
+                    bdc_depth = max(0, bdc_depth - 1)
+                elif (
+                    operator == pikepdf.Operator("Do")
+                    and bdc_depth > 0
+                    and len(operands) == 1
+                    and str(operands[0]) in image_names
+                ):
+                    already_tagged.add(str(operands[0]))
+
+            untagged = image_names - already_tagged
+            if not untagged:
+                continue
+
+            # Find next available MCID on this page
+            mcid = 0
+            for operands, operator in ops:
+                if operator == pikepdf.Operator("BDC") and len(operands) >= 2:
+                    props = operands[1]
+                    if isinstance(props, pikepdf.Dictionary) and "/MCID" in props:
+                        mcid = max(mcid, int(props["/MCID"]) + 1)
+
+            # Wrap untagged image Do ops in BDC/EMC
+            page_obj = page.obj if hasattr(page, "obj") else page
+            new_ops: list[tuple[list, pikepdf.Operator]] = []
+            for operands, operator in ops:
+                if (
+                    operator == pikepdf.Operator("Do")
+                    and len(operands) == 1
+                    and str(operands[0]) in untagged
+                ):
+                    new_ops.append((
+                        [pikepdf.Name("/Figure"),
+                         pikepdf.Dictionary({"/MCID": mcid})],
+                        pikepdf.Operator("BDC"),
+                    ))
+                    new_ops.append((operands, operator))
+                    new_ops.append(([], pikepdf.Operator("EMC")))
+
+                    fig_elem = make_struct_elem(
+                        pdf, "Figure", doc_elem, page=page_obj, mcid=mcid
+                    )
+                    add_kid(doc_elem, fig_elem)
+                    untagged.discard(str(operands[0]))
+                    count += 1
+                    mcid += 1
+                else:
+                    new_ops.append((operands, operator))
+
+            try:
+                new_content = pikepdf.unparse_content_stream(new_ops)
+                page["/Contents"] = pdf.make_stream(new_content)
+            except Exception:
+                logger.debug("Could not rewrite content stream for page %d", page_idx)
+
+        return count
+
     def _is_already_tagged(self, pdf: pikepdf.Pdf) -> bool:
         """Check if the PDF already has a populated tag tree."""
         if "/StructTreeRoot" not in pdf.Root:
@@ -104,7 +201,7 @@ class TaggerProcessor:
         doc_elem: pikepdf.Object,
         page_idx: int,
     ) -> int:
-        """Wrap text content on a page in marked content and create /P elems."""
+        """Wrap text and image content on a page in marked content."""
         if "/Contents" not in page:
             return 0
 
@@ -114,6 +211,9 @@ class TaggerProcessor:
         except Exception:
             logger.debug("Could not parse content stream for page %d", page_idx)
             return 0
+
+        # Build set of image XObject names on this page
+        image_names = self._get_image_xobj_names(page)
 
         new_ops: list[tuple[list[pikepdf.Object], pikepdf.Operator]] = []
         mcid = 0
@@ -161,6 +261,24 @@ class TaggerProcessor:
 
             if in_text:
                 text_ops_buffer.append((operands, operator))
+            # Tag image Do operators as /Figure
+            elif (
+                operator == pikepdf.Operator("Do")
+                and len(operands) == 1
+                and str(operands[0]) in image_names
+            ):
+                new_ops.append((
+                    [pikepdf.Name("/Figure"), pikepdf.Dictionary({"/MCID": mcid})],
+                    pikepdf.Operator("BDC"),
+                ))
+                new_ops.append((operands, operator))
+                new_ops.append(([], pikepdf.Operator("EMC")))
+
+                fig_elem = make_struct_elem(
+                    pdf, "Figure", doc_elem, page=page, mcid=mcid
+                )
+                add_kid(doc_elem, fig_elem)
+                mcid += 1
             else:
                 new_ops.append((operands, operator))
 
@@ -170,6 +288,27 @@ class TaggerProcessor:
             page["/Contents"] = pdf.make_stream(new_content)
 
         return mcid
+
+    @staticmethod
+    def _get_image_xobj_names(page: pikepdf.Dictionary) -> set[str]:
+        """Return set of XObject names (e.g. '/Im0') that are images."""
+        names: set[str] = set()
+        try:
+            resources = page.get("/Resources")
+            if resources is None or "/XObject" not in resources:
+                return names
+            for name, xobj_ref in resources["/XObject"].items():
+                xobj = xobj_ref
+                if hasattr(xobj, "resolve"):
+                    xobj = xobj.resolve()
+                if isinstance(xobj, pikepdf.Stream):
+                    if str(xobj.get("/Subtype", "")) == "/Image":
+                        # pikepdf dict keys may or may not include leading /
+                        key = name if name.startswith("/") else f"/{name}"
+                        names.add(key)
+        except Exception:
+            logger.debug("Could not enumerate image XObjects")
+        return names
 
     def _build_parent_tree(
         self,

@@ -173,9 +173,22 @@ def _xobj_to_pil(xobj: pikepdf.Stream) -> Image.Image | None:
     except Exception:
         logger.debug("pikepdf.PdfImage extraction failed, trying raw decode", exc_info=True)
 
-    # Fallback: try to decode raw bytes
+    # Fallback for images with SMask (transparency) or exotic colorspaces
+    # like CalRGB: strip the SMask and try again
+    if "/SMask" in xobj:
+        try:
+            saved_smask = xobj["/SMask"]
+            del xobj["/SMask"]
+            pdfimage = pikepdf.PdfImage(xobj)
+            img = pdfimage.as_pil_image()
+            xobj["/SMask"] = saved_smask  # restore
+            return _ensure_rgb(img)
+        except Exception:
+            logger.debug("SMask-stripped extraction also failed", exc_info=True)
+
+    # Fallback: try to decode decompressed bytes
     try:
-        raw = bytes(xobj.read_raw_bytes())
+        raw = bytes(xobj.read_bytes())
         w = int(xobj.get("/Width", 0))
         h = int(xobj.get("/Height", 0))
         bpc = int(xobj.get("/BitsPerComponent", 8))

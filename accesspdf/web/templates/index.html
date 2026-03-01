@@ -853,6 +853,27 @@
     if (!currentJobId || imageData.length === 0) return;
 
     btnGenerate.disabled = true;
+    btnGenerate.textContent = "Saving...";
+
+    // Auto-save current state so decorative/approved marks are persisted
+    // before the server decides which images need AI generation
+    const updates = imageData.map((img, idx) => {
+      const card = document.querySelectorAll(".image-card")[idx];
+      const ta = card ? card.querySelector("textarea") : null;
+      const ctx = card ? card.querySelector(".context-hint") : null;
+      return {
+        image_hash: img.image_hash,
+        alt_text: ta ? ta.value : img.alt_text,
+        status: img.status,
+        context: ctx ? ctx.value : (img.context || ""),
+      };
+    });
+    await fetch(`/api/job/${currentJobId}/alt-text`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(updates),
+    });
+
     btnGenerate.textContent = "Starting...";
 
     const payload = { provider: providerSelect.value };

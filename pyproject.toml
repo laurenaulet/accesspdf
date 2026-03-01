@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "accesspdf"
-version = "1.2.0"
+version = "1.2.1"
 description = "AI-powered PDF accessibility remediation, at scale"
 readme = "README.md"
 license = { file = "LICENSE" }
