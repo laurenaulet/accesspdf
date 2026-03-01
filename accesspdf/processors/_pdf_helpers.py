@@ -8,17 +8,22 @@ import pikepdf
 def ensure_struct_tree_root(pdf: pikepdf.Pdf) -> pikepdf.Dictionary:
     """Return StructTreeRoot, creating it if absent."""
     if "/StructTreeRoot" in pdf.Root:
-        return pdf.Root["/StructTreeRoot"]
+        root = pdf.Root["/StructTreeRoot"]
+    else:
+        root = pdf.make_indirect(pikepdf.Dictionary({
+            "/Type": pikepdf.Name("/StructTreeRoot"),
+            "/K": pikepdf.Array(),
+            "/ParentTree": pdf.make_indirect(pikepdf.Dictionary({
+                "/Nums": pikepdf.Array(),
+            })),
+        }))
+        pdf.Root["/StructTreeRoot"] = root
 
-    struct_root = pdf.make_indirect(pikepdf.Dictionary({
-        "/Type": pikepdf.Name("/StructTreeRoot"),
-        "/K": pikepdf.Array(),
-        "/ParentTree": pdf.make_indirect(pikepdf.Dictionary({
-            "/Nums": pikepdf.Array(),
-        })),
-    }))
-    pdf.Root["/StructTreeRoot"] = struct_root
-    return struct_root
+    # Ensure /RoleMap exists (PDF/UA requires it, even if empty)
+    if "/RoleMap" not in root:
+        root["/RoleMap"] = pikepdf.Dictionary()
+
+    return root
 
 
 def ensure_mark_info(pdf: pikepdf.Pdf) -> pikepdf.Dictionary:

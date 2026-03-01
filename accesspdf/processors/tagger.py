@@ -43,7 +43,9 @@ class TaggerProcessor:
     def _tag(self, pdf: pikepdf.Pdf) -> ProcessorResult:
         # Check if already properly tagged
         if self._is_already_tagged(pdf):
-            return ProcessorResult(processor_name=self.name, changes_made=0)
+            # Even if already tagged, ensure every page has /Tabs /S
+            tabs_added = self._ensure_tabs(pdf)
+            return ProcessorResult(processor_name=self.name, changes_made=tabs_added)
 
         struct_root = ensure_struct_tree_root(pdf)
         ensure_mark_info(pdf)
@@ -62,6 +64,8 @@ class TaggerProcessor:
 
             # Build parent tree entry for this page: page_idx -> array of struct elems
             page["/StructParents"] = page_idx
+            # /Tabs /S tells readers to use structure order for tab/reading order
+            page["/Tabs"] = pikepdf.Name("/S")
 
         # Rebuild parent tree from doc_elem's children
         self._build_parent_tree(parent_tree, doc_elem, pdf)
@@ -70,6 +74,16 @@ class TaggerProcessor:
             processor_name=self.name,
             changes_made=total_mcids,
         )
+
+    @staticmethod
+    def _ensure_tabs(pdf: pikepdf.Pdf) -> int:
+        """Set /Tabs /S on every page that lacks it. Returns count of pages fixed."""
+        count = 0
+        for page in pdf.pages:
+            if "/Tabs" not in page:
+                page["/Tabs"] = pikepdf.Name("/S")
+                count += 1
+        return count
 
     def _is_already_tagged(self, pdf: pikepdf.Pdf) -> bool:
         """Check if the PDF already has a populated tag tree."""
