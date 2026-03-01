@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from pathlib import Path
 
 import pikepdf
@@ -58,8 +59,11 @@ class MetadataProcessor:
         if not self._has_title(pdf):
             title = self._derive_title(pdf)
             if title:
-                with pdf.open_metadata() as meta:
-                    meta["dc:title"] = title
+                # Write to docinfo (always safe).
+                pdf.docinfo["/Title"] = title
+                # Attempt XMP update with a timeout — some PDFs have
+                # corrupt XMP that causes open_metadata() to hang forever.
+                self._try_set_xmp_title(pdf, title, warnings)
                 changes += 1
 
         # 3. Ensure MarkInfo
@@ -80,6 +84,36 @@ class MetadataProcessor:
             changes_made=changes,
             warnings=warnings,
         )
+
+    @staticmethod
+    def _try_set_xmp_title(
+        pdf: pikepdf.Pdf, title: str, warnings: list[str]
+    ) -> None:
+        """Attempt to write title into XMP metadata with a 5-second timeout.
+
+        Some PDFs have corrupt XMP that causes ``open_metadata()`` to hang
+        indefinitely.  We run it in a thread with a timeout so the pipeline
+        is never blocked.  Failure is non-fatal — the docinfo title is the
+        primary source and is already set by the caller.
+        """
+        result: list[Exception | None] = [None]
+
+        def _write() -> None:
+            try:
+                with pdf.open_metadata() as meta:
+                    meta["dc:title"] = title
+            except Exception as exc:
+                result[0] = exc
+
+        t = threading.Thread(target=_write, daemon=True)
+        t.start()
+        t.join(timeout=5)
+        if t.is_alive():
+            logger.warning("XMP metadata write timed out (corrupt XMP?) -- skipping")
+            warnings.append("Could not write XMP title (timed out, possibly corrupt XMP)")
+        elif result[0] is not None:
+            logger.warning("Could not write XMP title: %s", result[0])
+            warnings.append(f"Could not write XMP title: {result[0]}")
 
     def _detect_language(self, pdf: pikepdf.Pdf) -> str:
         """Detect document language using langdetect."""
