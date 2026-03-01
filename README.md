@@ -119,6 +119,12 @@ pip install "accesspdf[anthropic]"   # Add Claude provider
 pip install "accesspdf[openai]"      # Add GPT-4 provider
 ```
 
+## Known limitations
+
+- **PowerPoint slides saved as PDF** don't work well. PowerPoint exports images, text boxes, and shapes as separate unrelated objects with no logical reading order. For slides, add alt text in PowerPoint before exporting to PDF.
+- **Scanned PDFs** (image-only, no selectable text) are detected and flagged but can't be fixed -- they need OCR first.
+- **AI alt text always needs human review.** It's a good starting point but can be wrong or misleading, especially for charts, diagrams, and technical figures.
+
 ## Contributing
 
 ```bash
