@@ -7,7 +7,7 @@ Targets **WCAG 2.1 AA** and **PDF/UA**.
 ## Quick start
 
 ```bash
-pip install "accesspdf[web]"
+pip install accesspdf
 accesspdf serve
 ```
 
@@ -114,10 +114,9 @@ accesspdf providers                      # Show available AI providers
 ## Installation options
 
 ```bash
-pip install accesspdf          # CLI only
-pip install "accesspdf[web]"   # CLI + browser UI (recommended)
-pip install "accesspdf[anthropic]"  # Add Claude provider
-pip install "accesspdf[openai]"     # Add GPT-4 provider
+pip install accesspdf                # CLI + web UI (everything you need)
+pip install "accesspdf[anthropic]"   # Add Claude provider
+pip install "accesspdf[openai]"      # Add GPT-4 provider
 ```
 
 ## Contributing

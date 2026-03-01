@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "accesspdf"
-version = "1.1.2"
+version = "1.2.0"
 description = "AI-powered PDF accessibility remediation, at scale"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -39,6 +39,9 @@ dependencies = [
   "langdetect>=1.0.9",
   "httpx>=0.27",        # used by Ollama + Gemini providers
   "rich>=13.0",         # typer dependency; also used in reporter
+  "fastapi>=0.110",     # web UI
+  "uvicorn[standard]>=0.29",
+  "python-multipart>=0.0.9",
 ]
 
 [project.optional-dependencies]
@@ -53,12 +56,8 @@ all-providers = [
   "openai>=1.25",
 ]
 
-# Web UI (browser-based alt text review)
-web = [
-  "fastapi>=0.110",
-  "uvicorn[standard]>=0.29",
-  "python-multipart>=0.0.9",
-]
+# Web UI — kept for backwards compatibility but now included by default
+web = []
 
 # Development dependencies
 dev = [
