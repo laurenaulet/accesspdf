@@ -40,6 +40,9 @@ If you prefer the command line over the web UI:
 # 1. See what's wrong (read-only, never touches your file)
 accesspdf check my-document.pdf
 
+# 1b. Get detailed info including all affected pages
+accesspdf check my-document.pdf --verbose
+
 # 2. Fix structural issues
 accesspdf fix my-document.pdf -o my-document_accessible.pdf
 
@@ -102,6 +105,7 @@ Statuses: **needs_review** (not yet described), **approved** (gets injected), **
 
 ```
 accesspdf check <pdf>                    # Analyze accessibility (read-only)
+accesspdf check <pdf> --verbose          # Show all affected pages for each issue
 accesspdf fix <pdf> -o <output>          # Fix structure + inject alt text
 accesspdf fix <pdf> --alt-text <yaml>    # Fix with sidecar descriptions
 accesspdf batch <dir> -o <outdir>        # Fix all PDFs in a directory

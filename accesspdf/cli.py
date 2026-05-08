@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict
+import json
 from pathlib import Path
 from typing import Optional
 
@@ -10,12 +12,31 @@ from rich.console import Console
 from rich.table import Table
 
 from accesspdf import __version__
+from accesspdf.models import AnalysisResult, Severity
 
 def _clean_title(name: str) -> str:
     """Return *name* only if it looks like a real document title, not a filename."""
     if name.lower().endswith(".pdf"):
         return ""
     return name
+
+
+def _format_issue_message(issue, verbose: bool) -> str:
+    """Format an issue message, including all affected pages if verbose."""
+    if verbose and issue.affected_pages:
+        pages_str = ", ".join(str(p) for p in sorted(issue.affected_pages))
+        return f"{issue.message} - Pages: {pages_str}"
+    return issue.message
+
+
+def _analysis_result_to_json(result: AnalysisResult) -> str:
+    """Serialize an AnalysisResult to JSON for CLI output."""
+    data = asdict(result)
+    data["source_path"] = str(result.source_path)
+    for issue in data["issues"]:
+        if isinstance(issue.get("severity"), Severity):
+            issue["severity"] = issue["severity"].value
+    return json.dumps(data, indent=2)
 
 
 app = typer.Typer(
@@ -45,6 +66,8 @@ def main(
 @app.command()
 def check(
     pdf: Path = typer.Argument(..., help="Path to the PDF file to analyze."),
+    verbose: bool = typer.Option(False, "--verbose", help="Show detailed information including all affected pages."),
+    json_output: bool = typer.Option(False, "--json", help="Output analysis results as JSON instead of a table."),
 ) -> None:
     """Analyze a PDF for accessibility issues (no modification)."""
     from accesspdf.analyzer import PDFAnalyzer
@@ -55,6 +78,10 @@ def check(
 
     analyzer = PDFAnalyzer()
     result = analyzer.analyze(pdf)
+
+    if json_output:
+        print(_analysis_result_to_json(result))
+        return
 
     # Count tags by type for summary
     link_count = sum(1 for t in result.tags if t.tag_type == "Link")
@@ -90,7 +117,8 @@ def check(
         }
         for issue in result.issues:
             icon = severity_icon.get(issue.severity.value, " ")
-            console.print(f"  {icon} [{issue.rule}] {issue.message}")
+            message = _format_issue_message(issue, verbose)
+            console.print(f"  {icon} [{issue.rule}] {message}")
 
     if result.is_scanned:
         console.print()

@@ -32,6 +32,7 @@ class AccessibilityIssue:
     message: str
     page: int | None = None
     element: str | None = None
+    affected_pages: list[int] = field(default_factory=list)
 
 
 @dataclass
