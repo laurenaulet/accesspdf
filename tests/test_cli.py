@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 
 import pytest
 from typer.testing import CliRunner
@@ -28,7 +29,7 @@ class TestCheckCommand:
         assert result.exit_code == 0
         # Should show page count but NOT individual pages
         assert "on 1 page(s)" in result.stdout
-        assert "Pages:" not in result.stdout
+        assert " - Pages:" not in result.stdout
 
     def test_check_with_verbose_flag(self, low_contrast_pdf: Path) -> None:
         """Check command with --verbose should show affected pages."""
@@ -36,14 +37,27 @@ class TestCheckCommand:
         assert result.exit_code == 0
         # Should show page count AND individual pages
         assert "on 1 page(s)" in result.stdout
-        assert "Pages: 1" in result.stdout
+        assert " - Pages: 1" in result.stdout
 
     def test_check_with_verbose_tables(self, tables_pdf: Path) -> None:
         """Check command with --verbose should show affected pages for tables PDF."""
         result = runner.invoke(app, ["check", str(tables_pdf), "--verbose"])
         assert result.exit_code == 0
         # Should show affected pages
-        assert "Pages:" in result.stdout
+        assert " - Pages:" in result.stdout
+
+    def test_check_with_json_flag(self, low_contrast_pdf: Path) -> None:
+        """Check command with --json should output JSON with page arrays."""
+        result = runner.invoke(app, ["check", str(low_contrast_pdf), "--json"])
+        assert result.exit_code == 0
+
+        data = json.loads(result.stdout)
+        assert data["source_path"].endswith("low_contrast.pdf")
+        assert data["page_count"] == 1
+        assert isinstance(data["issues"], list)
+
+        contrast_issue = next(i for i in data["issues"] if i["rule"].startswith("contrast-"))
+        assert contrast_issue["affected_pages"] == [1]
 
 
 class TestAnalyzerAffectedPages:
