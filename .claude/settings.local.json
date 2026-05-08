@@ -6,7 +6,10 @@
       "Bash(python -m pytest tests/ -v)",
       "Bash(python -m accesspdf --version)",
       "Bash(python -m accesspdf --help)",
-      "Bash(git add .gitignore LICENSE README.md pyproject.toml accesspdf/ tests/ docs/ OldDocs/ files/ .claude/)"
+      "Bash(git add .gitignore LICENSE README.md pyproject.toml accesspdf/ tests/ docs/ OldDocs/ files/ .claude/)",
+      "Bash(python -m pytest tests/test_analyzer.py -v)",
+      "Bash(pip install *)",
+      "Bash(python *)"
     ]
   }
 }

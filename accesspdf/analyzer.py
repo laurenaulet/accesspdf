@@ -93,15 +93,40 @@ class PDFAnalyzer:
         if "/StructTreeRoot" not in pdf.Root:
             return
 
-        struct_root = pdf.Root["/StructTreeRoot"]
-        self._walk_struct_tree(struct_root, result)
+        # Build mapping of page object generation numbers to page numbers
+        page_map: dict[tuple[int, int], int] = {}
+        for page_num, page in enumerate(pdf.pages, start=1):
+            try:
+                page_map[page.objgen] = page_num
+            except Exception:
+                pass
 
-    def _walk_struct_tree(self, node: pikepdf.Object, result: AnalysisResult) -> None:
+        struct_root = pdf.Root["/StructTreeRoot"]
+        self._walk_struct_tree(struct_root, result, page_map)
+
+    def _walk_struct_tree(
+        self, 
+        node: pikepdf.Object, 
+        result: AnalysisResult,
+        page_map: dict[tuple[int, int], int] | None = None,
+    ) -> None:
         """Recursively walk the structure tree and collect TagInfo."""
+        if page_map is None:
+            page_map = {}
+        
         try:
             if "/S" in node:
                 tag_type = str(node["/S"])[1:]  # strip leading /
                 tag = TagInfo(tag_type=tag_type)
+
+                # Try to extract page number from /Pg reference
+                if "/Pg" in node and page_map:
+                    try:
+                        page_ref = node["/Pg"]
+                        if hasattr(page_ref, 'objgen') and page_ref.objgen in page_map:
+                            tag.page = page_map[page_ref.objgen]
+                    except Exception:
+                        pass
 
                 if "/Alt" in node:
                     tag.has_alt_text = True
@@ -114,9 +139,9 @@ class PDFAnalyzer:
                 if isinstance(kids, pikepdf.Array):
                     for child in kids:
                         if isinstance(child, pikepdf.Dictionary):
-                            self._walk_struct_tree(child, result)
+                            self._walk_struct_tree(child, result, page_map)
                 elif isinstance(kids, pikepdf.Dictionary):
-                    self._walk_struct_tree(kids, result)
+                    self._walk_struct_tree(kids, result, page_map)
         except Exception:
             logger.debug("Error walking struct tree node", exc_info=True)
 
@@ -328,9 +353,9 @@ class PDFAnalyzer:
                     rule="contrast-very-low",
                     severity=Severity.ERROR,
                     message=(
-                        f"Very low text contrast (ratio < 3:1) on page(s) "
-                        f"{pages_str}{suffix}."
+                        f"Very low text contrast (ratio < 3:1) on {len(very_low_contrast_pages)} page(s)"
                     ),
+                    affected_pages=very_low_contrast_pages,
                 )
             )
 
@@ -346,9 +371,9 @@ class PDFAnalyzer:
                     rule="contrast-low",
                     severity=Severity.WARNING,
                     message=(
-                        f"Low text contrast (ratio < 4.5:1) on page(s) "
-                        f"{pages_str}{suffix}."
+                        f"Low text contrast (ratio < 4.5:1) on {len(low_contrast_pages)} page(s)"
                     ),
+                    affected_pages=low_contrast_pages,
                 )
             )
 
@@ -431,11 +456,13 @@ class PDFAnalyzer:
         figure_tags = [t for t in result.tags if t.tag_type == "Figure"]
         images_without_alt = [t for t in figure_tags if not t.has_alt_text]
         if images_without_alt:
+            affected_pages = [t.page for t in images_without_alt if t.page is not None]
             result.issues.append(
                 AccessibilityIssue(
                     rule="image-alt-text",
                     severity=Severity.ERROR,
                     message=f"{len(images_without_alt)} image(s) missing alt text.",
+                    affected_pages=sorted(set(affected_pages)),
                 )
             )
 
@@ -452,46 +479,52 @@ class PDFAnalyzer:
         if not link_tags:
             return
 
-        ambiguous_count = 0
-        bare_url_count = 0
-        empty_count = 0
+        ambiguous_tags = []
+        bare_url_tags = []
+        empty_tags = []
 
         for tag in link_tags:
             text = tag.alt_text.strip()
             if not text or text == "Link":
-                empty_count += 1
+                empty_tags.append(tag)
             elif text.lower() in _AMBIGUOUS_LINK_TEXTS:
-                ambiguous_count += 1
+                ambiguous_tags.append(tag)
             elif _URL_PATTERN.match(text):
-                bare_url_count += 1
+                bare_url_tags.append(tag)
 
-        if empty_count:
+        if empty_tags:
+            affected_pages = [t.page for t in empty_tags if t.page is not None]
             result.issues.append(
                 AccessibilityIssue(
                     rule="link-empty-text",
                     severity=Severity.ERROR,
-                    message=f"{empty_count} link(s) have no descriptive text.",
+                    message=f"{len(empty_tags)} link(s) have no descriptive text.",
+                    affected_pages=sorted(set(affected_pages)),
                 )
             )
 
-        if ambiguous_count:
+        if ambiguous_tags:
+            affected_pages = [t.page for t in ambiguous_tags if t.page is not None]
             result.issues.append(
                 AccessibilityIssue(
                     rule="link-ambiguous-text",
                     severity=Severity.WARNING,
                     message=(
-                        f"{ambiguous_count} link(s) use ambiguous text "
+                        f"{len(ambiguous_tags)} link(s) use ambiguous text "
                         f'(e.g. "click here", "read more").'
                     ),
+                    affected_pages=sorted(set(affected_pages)),
                 )
             )
 
-        if bare_url_count:
+        if bare_url_tags:
+            affected_pages = [t.page for t in bare_url_tags if t.page is not None]
             result.issues.append(
                 AccessibilityIssue(
                     rule="link-bare-url",
                     severity=Severity.INFO,
-                    message=f"{bare_url_count} link(s) use a bare URL as link text.",
+                    message=f"{len(bare_url_tags)} link(s) use a bare URL as link text.",
+                    affected_pages=sorted(set(affected_pages)),
                 )
             )
 

@@ -18,6 +18,14 @@ def _clean_title(name: str) -> str:
     return name
 
 
+def _format_issue_message(issue, verbose: bool) -> str:
+    """Format an issue message, including all affected pages if verbose."""
+    if verbose and issue.affected_pages:
+        pages_str = ", ".join(str(p) for p in sorted(issue.affected_pages))
+        return f"{issue.message} - Pages: {pages_str}"
+    return issue.message
+
+
 app = typer.Typer(
     name="accesspdf",
     help="PDF accessibility remediation tool.",
@@ -45,6 +53,7 @@ def main(
 @app.command()
 def check(
     pdf: Path = typer.Argument(..., help="Path to the PDF file to analyze."),
+    verbose: bool = typer.Option(False, "--verbose", help="Show detailed information including all affected pages."),
 ) -> None:
     """Analyze a PDF for accessibility issues (no modification)."""
     from accesspdf.analyzer import PDFAnalyzer
@@ -90,7 +99,8 @@ def check(
         }
         for issue in result.issues:
             icon = severity_icon.get(issue.severity.value, " ")
-            console.print(f"  {icon} [{issue.rule}] {issue.message}")
+            message = _format_issue_message(issue, verbose)
+            console.print(f"  {icon} [{issue.rule}] {message}")
 
     if result.is_scanned:
         console.print()
